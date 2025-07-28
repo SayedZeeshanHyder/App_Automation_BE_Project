@@ -1,4 +1,5 @@
-import 'package:flutomapp/screens/project_screens/project_creation_screen.dart';
+
+import 'package:flutomapp/screens/auth_screens/on_boarding_screen.dart';
 import 'package:flutomapp/screens/project_screens/project_list_screen.dart';
 import 'package:flutomapp/services/encryption_service.dart';
 import 'package:flutomapp/services/permission_service.dart';
@@ -27,7 +28,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: ProjectListScreen()
+      home: OnboardingScreen()
     );
   }
 }
