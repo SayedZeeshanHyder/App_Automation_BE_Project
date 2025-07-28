@@ -43,6 +43,8 @@ dependencies:
   archive:
   encrypt:
   permission_handler:
+  lottie:
+  image_picker:
 
 
 dev_dependencies:
@@ -70,6 +72,8 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - .env
+    - assets/lottie/
+    - assets/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
