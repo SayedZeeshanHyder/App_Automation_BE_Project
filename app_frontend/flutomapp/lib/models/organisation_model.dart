@@ -12,6 +12,12 @@ class Organization {
     required this.organisationDescription,
     required this.memberCount,
   });
+
+  @override
+  bool operator ==(Object other) {
+    return other is Organization &&
+        id == other.id;
+  }
 }
 
 class CreateOrganizationData {

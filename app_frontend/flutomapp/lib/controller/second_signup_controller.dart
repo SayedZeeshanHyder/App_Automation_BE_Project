@@ -1,6 +1,10 @@
+import 'dart:convert';
+
+import 'package:flutomapp/constants/api_constants.dart';
+import 'package:flutomapp/services/shared_preferences_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-
+import 'package:http/http.dart' as http;
 import '../models/organisation_model.dart';
 
 class SecondSignUpController extends GetxController {
@@ -21,33 +25,22 @@ class SecondSignUpController extends GetxController {
 
   Future<void> loadOrganizations() async {
     isLoading.value = true;
-    // Simulate API call
-    await Future.delayed(Duration(seconds: 2));
 
-    organizations.value = [
-      Organization(
-        id: 'org_001',
-        organisationName: 'Tech Innovators Inc.',
-        organisationLogo: 'https://example.com/logo1.png',
-        organisationDescription: 'Leading technology company focused on AI and ML solutions.',
-        memberCount: 150,
-      ),
-      Organization(
-        id: 'org_002',
-        organisationName: 'Digital Solutions Ltd.',
-        organisationLogo: 'https://example.com/logo2.png',
-        organisationDescription: 'Full-stack development and digital transformation services.',
-        memberCount: 85,
-      ),
-      Organization(
-        id: 'org_003',
-        organisationName: 'StartUp Hub',
-        organisationLogo: 'https://example.com/logo3.png',
-        organisationDescription: 'Innovation-driven startup accelerator and development house.',
-        memberCount: 42,
-      ),
-    ];
+    String authToken = SharedPreferencesService.getToken();
+    final response = await http.get(Uri.parse("${ApiConstants.baseUrl}/organisation"),headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer $authToken",
+    });
+    if (response.statusCode == 200) {
 
+        final List data = jsonDecode(response.body) as List;
+        for(var org in data) {
+          organizations.add(Organization(id: org['id'], organisationName: org['organisationName'], organisationLogo: org['organisationLogo'], organisationDescription: org['organisationDescription'], memberCount: org['members'].length));
+        }
+        filteredOrganizations.value = organizations;
+      } else {
+        Get.snackbar('Error',"${response.statusCode} ${response.body}");
+      }
     filteredOrganizations.value = organizations;
     isLoading.value = false;
   }
@@ -74,7 +67,6 @@ class SecondSignUpController extends GetxController {
     isJoining.value = true;
     statusMessage.value = 'Sending join request...';
 
-    // Simulate API calls
     await Future.delayed(Duration(seconds: 4));
 
     statusMessage.value = 'Join request sent successfully! Waiting for approval.';

@@ -17,11 +17,15 @@ class SharedPreferencesService{
     await prefs.setString("userId", authInfo['userId']);
   }
 
-  static Future<String> getToken()async{
+  static Future<void> storeOrganizationInfo(String organizationId)async{
+    await prefs.setString("organizationId", organizationId);
+  }
+
+  static String getToken(){
     return prefs.getString("token") ?? "";
   }
 
-  static Future<String> getUserId()async{
+  static String getUserId(){
     return prefs.getString("userId") ?? "";
   }
 

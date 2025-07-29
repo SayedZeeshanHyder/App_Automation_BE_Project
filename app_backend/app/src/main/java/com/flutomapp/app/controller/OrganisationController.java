@@ -42,4 +42,9 @@ public class OrganisationController {
     public ResponseEntity<?> removeMember(Authentication authentication, @RequestBody OrganisationApprovalRequest request) {
         return ResponseEntity.ok(organisationService.removeMember(authentication, request));
     }
+
+    @GetMapping
+    public ResponseEntity<?> getAllOrganisations() {
+        return ResponseEntity.ok(organisationService.getAllOrganisations());
+    }
 }

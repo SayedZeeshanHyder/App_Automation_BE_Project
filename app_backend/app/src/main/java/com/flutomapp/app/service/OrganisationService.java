@@ -148,4 +148,9 @@ public class OrganisationService {
         response.put("message", "user with user Id "+userId+" is not a member of organisation with Id "+organisationId);
         return response;
     }
+
+    public List<OrganisationDto> getAllOrganisations() {
+        List<OrganisationEntity> organisations = organisationRepository.findAll();
+        return organisations.stream().map(OrganisationDto::new).toList();
+    }
 }
