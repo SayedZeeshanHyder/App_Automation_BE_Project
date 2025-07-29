@@ -45,6 +45,7 @@ dependencies:
   permission_handler:
   lottie:
   image_picker:
+  uuid:
 
 
 dev_dependencies:

@@ -1,3 +1,4 @@
+import 'package:flutomapp/services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -9,6 +10,7 @@ import '../../models/organisation_model.dart';
 
 class SecondSignUpScreen extends StatelessWidget {
   final SignUpController signUpController = Get.find<SignUpController>();
+  final SecondSignUpController secondSignUpController = Get.put(SecondSignUpController());
 
   @override
   Widget build(BuildContext context) {
@@ -318,13 +320,7 @@ class SecondSignUpScreen extends StatelessWidget {
       child: ElevatedButton(
         onPressed: controller.selectedOrganization.value != null && !controller.isJoining.value
             ? () {
-          // Navigate to next screen or complete signup
-          Get.snackbar(
-            'Success',
-            'Signup process completed!',
-            backgroundColor: AppColors.primaryGreen,
-            colorText: AppColors.whiteText,
-          );
+                AuthService.signUp(signUpController.signUpData.value, false);
         }
             : null,
         style: ElevatedButton.styleFrom(
@@ -491,13 +487,15 @@ class SecondSignUpScreen extends StatelessWidget {
   }
 
   Widget _buildCreateButton(CreateOrganizationController controller) {
-    return Obx(() => Container(
+    return Obx(() => SizedBox(
       width: double.infinity,
       height: 56,
       child: ElevatedButton(
         onPressed: controller.isCreating.value
             ? null
-            : controller.createOrganization,
+            : (){
+          AuthService.signUp(signUpController.signUpData.value,true);
+          },
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primaryGreen,
           shape: RoundedRectangleBorder(
