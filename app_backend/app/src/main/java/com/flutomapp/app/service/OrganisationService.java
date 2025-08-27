@@ -11,6 +11,7 @@ import com.flutomapp.app.templates.EmailTemplates;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,8 +106,13 @@ public class OrganisationService {
         List<UserEntity> members = organisation.getMembers();
         if (!members.contains(user)) {
             UserEntity owner = organisation.getOwner();
+            NotificationEntity newNotification = new NotificationEntity();
+            newNotification.setCategory("unactionable");
+            newNotification.setMessage("User "+user.getUsername()+" Aprroved to Organisation.");
+            newNotification.setCreatedAt(LocalDateTime.now());
             List<NotificationEntity> notifications = owner.getNotifications();
             notifications.remove(notification);
+            notifications.add(newNotification);
             owner.setNotifications(notifications);
             userRepository.save(owner);
 

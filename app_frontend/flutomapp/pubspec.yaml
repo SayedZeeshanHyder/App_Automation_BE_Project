@@ -46,6 +46,8 @@ dependencies:
   lottie:
   image_picker:
   uuid:
+  pinput:
+  intl:
 
 
 dev_dependencies:

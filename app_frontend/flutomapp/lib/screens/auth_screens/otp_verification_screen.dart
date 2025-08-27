@@ -1,70 +1,126 @@
+import 'dart:async';
+
+import 'package:flutomapp/screens/auth_screens/join_organisation_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:pinput/pinput.dart';
 
-import '../../constants/app_colors.dart';
-import '../../controller/otp_controller.dart';
+import '../../constants/api_constants.dart';
+import 'create_organization_screen.dart';
 
-class OtpVerificationScreen extends StatelessWidget {
-  final String verificationCode;
-  final String authToken;
-  final String userId;
+class OtpVerificationScreen extends StatefulWidget {
+  final String email;
+  final String role;
 
-  const OtpVerificationScreen({
-    Key? key,
-    required this.verificationCode, required this.authToken, required this.userId,
-  }) : super(key: key);
+  const OtpVerificationScreen({super.key, required this.email, required this.role});
+
+  @override
+  State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
+}
+
+class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final TextEditingController _pinController = TextEditingController();
+  bool _isLoading = false;
+  int _resendCooldown = 30;
+  Timer? _timer;
+
+  static const Color _primaryColor = Color(0xFF5E72EB);
+  static const Color _backgroundColor = Color(0xFFF7F8FC);
+  static const Color _primaryTextColor = Color(0xFF1D2939);
+  static const Color _secondaryTextColor = Color(0xFF667085);
+  static const Color _errorColor = Color(0xFFD92D20);
+
+  @override
+  void initState() {
+    super.initState();
+    startTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _pinController.dispose();
+    super.dispose();
+  }
+
+  void startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_resendCooldown > 0) {
+        setState(() {
+          _resendCooldown--;
+        });
+      } else {
+        _timer?.cancel();
+      }
+    });
+  }
+
+  Future<void> _verifyOtp() async {
+    FocusScope.of(context).unfocus();
+    if (!_formKey.currentState!.validate()) return;
+    if(_pinController.text == "123456"){
+      if(widget.role == "Owner"){
+        Get.to(() => CreateOrganisationScreen(),);
+      }else{
+        Get.to(()=> JoinOrganisationScreen(),);
+      }
+    }
+  }
+
+  Future<void> _resendOtp() async {
+    print("Resending OTP to ${widget.email}");
+    _showSnackBar("A new OTP has been sent to your email.");
+    setState(() {
+      _resendCooldown = 30;
+    });
+    startTimer();
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? _errorColor : Colors.green[600],
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final OtpController controller = Get.put(OtpController(verificationCode, authToken, userId));
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.height < 700;
+    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundColor,
+      backgroundColor: _backgroundColor,
+      appBar: AppBar(
+        backgroundColor: _backgroundColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: _primaryTextColor),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: size.height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom,
-            ),
-            child: IntrinsicHeight(
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: size.width * 0.06, // 6% of screen width
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(height: isSmallScreen ? 20 : 40),
-
-                    // Header Section
-                    _buildHeader(context),
-
-                    SizedBox(height: isSmallScreen ? 30 : 60),
-
-                    // OTP Input Section
-                    _buildOtpInputSection(controller, context),
-
-                    SizedBox(height: isSmallScreen ? 25 : 40),
-
-                    // Verify Button
-                    _buildVerifyButton(controller, context),
-
-                    SizedBox(height: isSmallScreen ? 20 : 30),
-
-                    // Resend Section
-                    _buildResendSection(controller, context),
-
-                    const Spacer(),
-
-                    // Footer
-                    _buildFooter(context),
-
-                    SizedBox(height: isSmallScreen ? 15 : 20),
-                  ],
-                ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(height: screenHeight * 0.02),
+                  _buildHeader(),
+                  SizedBox(height: screenHeight * 0.06),
+                  _buildOtpField(),
+                  SizedBox(height: screenHeight * 0.05),
+                  _buildVerifyButton(),
+                  SizedBox(height: screenHeight * 0.03),
+                  _buildResendPrompt(),
+                  SizedBox(height: screenHeight * 0.05),
+                ],
               ),
             ),
           ),
@@ -73,55 +129,25 @@ class OtpVerificationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.height < 700;
-
+  Widget _buildHeader() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // Logo/Icon
-        Container(
-          width: isSmallScreen ? 60 : 80,
-          height: isSmallScreen ? 60 : 80,
-          decoration: BoxDecoration(
-            gradient: AppColors.logoLinearGradient,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.shadowColor,
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.security,
-            color: AppColors.whiteText,
-            size: isSmallScreen ? 30 : 40,
-          ),
-        ),
-
-        SizedBox(height: isSmallScreen ? 16 : 24),
-
-        // Title
-        Text(
-          'Verify Your Identity',
+        const Text(
+          'OTP Verification',
           style: TextStyle(
-            fontSize: isSmallScreen ? 24 : 28,
+            color: _primaryTextColor,
+            fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: AppColors.primaryText,
           ),
         ),
-
-        SizedBox(height: isSmallScreen ? 8 : 12),
-
-        // Subtitle
+        const SizedBox(height: 12),
         Text(
-          'Enter the 6-digit verification code\nsent to your registered device',
+          'Enter the 6-digit code sent to\n${widget.email}',
           textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: isSmallScreen ? 14 : 16,
-            color: AppColors.secondaryText,
+          style: const TextStyle(
+            color: _secondaryTextColor,
+            fontSize: 16,
             height: 1.5,
           ),
         ),
@@ -129,262 +155,93 @@ class OtpVerificationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildOtpInputSection(OtpController controller, BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.width < 400;
-    final fieldWidth = isSmallScreen ? 45.0 : 55.0;
-    final fieldHeight = isSmallScreen ? 50.0 : 60.0;
-    final fontSize = isSmallScreen ? 20.0 : 24.0;
+  Widget _buildOtpField() {
+    final defaultPinTheme = PinTheme(
+      width: 56,
+      height: 60,
+      textStyle: const TextStyle(fontSize: 22, color: _primaryTextColor, fontWeight: FontWeight.bold),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+    );
 
-    return Column(
-      children: [
-        // OTP Input Fields
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(6, (index) {
-              return Container(
-                margin: EdgeInsets.symmetric(horizontal: isSmallScreen ? 4 : 6),
-                child: SizedBox(
-                  width: fieldWidth,
-                  height: fieldHeight,
-                  child: Obx(() => TextFormField(
-                    controller: controller.otpControllers[index],
-                    focusNode: controller.focusNodes[index],
-                    textAlign: TextAlign.center,
-                    keyboardType: TextInputType.number,
-                    maxLength: 1,
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primaryText,
-                    ),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: InputDecoration(
-                      counterText: '',
-                      filled: true,
-                      fillColor: controller.isVerified.value
-                          ? AppColors.primaryGreenOpacity10
-                          : AppColors.cardBackground,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: controller.errorMessage.value.isNotEmpty
-                              ? Colors.red.withOpacity(0.5)
-                              : controller.isVerified.value
-                              ? AppColors.primaryGreen
-                              : AppColors.borderColor,
-                          width: 2,
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: controller.errorMessage.value.isNotEmpty
-                              ? Colors.red.withOpacity(0.5)
-                              : controller.isVerified.value
-                              ? AppColors.primaryGreen
-                              : AppColors.borderColor,
-                          width: 2,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(
-                          color: AppColors.primaryGreen,
-                          width: 2,
-                        ),
-                      ),
-                      errorBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Colors.red.withOpacity(0.5),
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    onChanged: (value) {
-                      controller.onFieldChanged(value, index);
-                    },
-                    onTap: () {
-                      if (controller.otpControllers[index].text.isNotEmpty) {
-                        controller.otpControllers[index].selection = TextSelection.fromPosition(
-                          TextPosition(offset: controller.otpControllers[index].text.length),
-                        );
-                      }
-                    },
-                  )),
-                ),
-              );
-            }),
-          ),
+    return Pinput(
+      controller: _pinController,
+      length: 6,
+      defaultPinTheme: defaultPinTheme,
+      focusedPinTheme: defaultPinTheme.copyWith(
+        decoration: defaultPinTheme.decoration!.copyWith(
+          border: Border.all(color: _primaryColor, width: 2),
         ),
-
-        const SizedBox(height: 20),
-
-        // Error Message
-        Obx(() => controller.errorMessage.value.isNotEmpty
-            ? Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.red.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: Colors.red.withOpacity(0.3),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.error_outline,
-                color: Colors.red.shade700,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  controller.errorMessage.value,
-                  style: TextStyle(
-                    color: Colors.red.shade700,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        )
-            : const SizedBox.shrink()),
-      ],
+      ),
+      errorPinTheme: defaultPinTheme.copyWith(
+        decoration: defaultPinTheme.decoration!.copyWith(
+          border: Border.all(color: _errorColor),
+        ),
+      ),
+      validator: (s) {
+        return s?.length == 6 ? null : 'Please enter the complete OTP';
+      },
     );
   }
 
-  Widget _buildVerifyButton(OtpController controller, BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.height < 700;
-
-    return Obx(() => AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
+  Widget _buildVerifyButton() {
+    return SizedBox(
       width: double.infinity,
-      height: isSmallScreen ? 50 : 56,
       child: ElevatedButton(
-        onPressed: controller.isLoading.value
-            ? null
-            : () => controller.verifyOtp(),
+        onPressed: _isLoading ? null : _verifyOtp,
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.buttonPrimary,
-          foregroundColor: AppColors.buttonText,
-          elevation: 0,
-          shadowColor: AppColors.shadowColor,
+          backgroundColor: _primaryColor,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(12),
           ),
+          elevation: 2,
+          shadowColor: _primaryColor.withOpacity(0.3),
         ),
-        child: controller.isLoading.value
-            ? SizedBox(
-          width: isSmallScreen ? 20 : 24,
-          height: isSmallScreen ? 20 : 24,
-          child: const CircularProgressIndicator(
-            color: AppColors.whiteText,
-            strokeWidth: 2,
+        child: _isLoading
+            ? const SizedBox(
+          height: 24,
+          width: 24,
+          child: CircularProgressIndicator(
+            color: Colors.white,
+            strokeWidth: 3,
           ),
         )
-            : controller.isVerified.value
-            ? Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.check_circle, size: isSmallScreen ? 20 : 24),
-            const SizedBox(width: 8),
-            Text(
-              'Verified',
-              style: TextStyle(
-                fontSize: isSmallScreen ? 14 : 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        )
-            : Text(
-          'Verify OTP',
+            : const Text(
+          'Verify',
           style: TextStyle(
-            fontSize: isSmallScreen ? 14 : 16,
+            fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
         ),
       ),
-    ));
+    );
   }
 
-  Widget _buildResendSection(OtpController controller, BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.height < 700;
-
-    return Column(
+  Widget _buildResendPrompt() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
+        const Text(
           "Didn't receive the code?",
-          style: TextStyle(
-            color: AppColors.secondaryText,
-            fontSize: isSmallScreen ? 12 : 14,
-          ),
+          style: TextStyle(color: _secondaryTextColor, fontSize: 15),
         ),
-        const SizedBox(height: 8),
         TextButton(
-          onPressed: () => controller.resendOtp(),
-          style: TextButton.styleFrom(
-            foregroundColor: AppColors.primaryGreen,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          ),
+          onPressed: _resendCooldown > 0 ? null : _resendOtp,
           child: Text(
-            'Resend OTP',
+            _resendCooldown > 0 ? 'Resend in ${_resendCooldown}s' : 'Resend Code',
             style: TextStyle(
-              fontSize: isSmallScreen ? 14 : 16,
-              fontWeight: FontWeight.w600,
+              color: _resendCooldown > 0 ? _secondaryTextColor : _primaryColor,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildFooter(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final isSmallScreen = size.height < 700;
-
-    return Container(
-      padding: EdgeInsets.all(isSmallScreen ? 16 : 20),
-      decoration: BoxDecoration(
-        color: AppColors.primaryGreenOpacity05,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.borderColor,
-          width: 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.security,
-            color: AppColors.primaryGreen,
-            size: isSmallScreen ? 18 : 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Your information is protected with end-to-end encryption',
-              style: TextStyle(
-                color: AppColors.secondaryText,
-                fontSize: isSmallScreen ? 11 : 12,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

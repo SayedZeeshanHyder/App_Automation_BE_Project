@@ -29,4 +29,12 @@ class SharedPreferencesService{
     return prefs.getString("userId") ?? "";
   }
 
+  static bool isOnboardingVisited(){
+    return prefs.getBool("onboardingVisited") ?? false;
+  }
+
+  static Future<void> visitOnboarding()async {
+    await prefs.setBool("onboardingVisited", true);
+  }
+
 }

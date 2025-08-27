@@ -60,6 +60,7 @@ public class AuthController {
         response.put("user",new UserDto(user));
         response.put("token", jwtUtil.generateToken(user));
         String verificationCode = String.valueOf(new Random().nextInt(999999));
+        System.out.println(verificationCode);
         response.put("verificationCode", verificationCode);
         emailService.sendVerificationEmail(user.getEmail(),verificationCode);
         return ResponseEntity.ok(response);
