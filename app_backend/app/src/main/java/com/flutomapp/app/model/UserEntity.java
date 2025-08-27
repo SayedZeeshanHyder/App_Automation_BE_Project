@@ -9,7 +9,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.DBRef;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.time.LocalDateTime;
@@ -31,6 +30,8 @@ public class UserEntity implements UserDetails {
     private String password;
     private String email;
     private String role;
+    private String otp;
+    private boolean isVerified = false;
     private LocalDateTime createdAt = LocalDateTime.now();
     private String deviceToken;
     private List<NotificationEntity> notifications = new ArrayList<>();

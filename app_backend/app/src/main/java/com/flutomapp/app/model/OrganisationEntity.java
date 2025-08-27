@@ -15,7 +15,7 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-@Document(collection = "organisations")
+@Document(collection = "app_organisations")
 public class OrganisationEntity {
 
     @Id

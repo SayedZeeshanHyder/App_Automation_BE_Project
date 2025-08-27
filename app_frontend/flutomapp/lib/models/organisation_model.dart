@@ -1,33 +1,25 @@
-class Organization {
+class Organisation {
   final String id;
-  final String organisationName;
-  final String organisationLogo;
-  final String organisationDescription;
-  final int memberCount;
+  final String name;
+  final String description;
+  final String ownerName;
+  final DateTime createdAt;
 
-  Organization({
+  Organisation({
     required this.id,
-    required this.organisationName,
-    required this.organisationLogo,
-    required this.organisationDescription,
-    required this.memberCount,
+    required this.name,
+    required this.description,
+    required this.ownerName,
+    required this.createdAt,
   });
 
-  @override
-  bool operator ==(Object other) {
-    return other is Organization &&
-        id == other.id;
+  factory Organisation.fromJson(Map<String, dynamic> json) {
+    return Organisation(
+      id: json['id'] ?? '',
+      name: json['organisationName'] ?? 'No Name',
+      description: json['organisationDescription'] ?? 'No Description',
+      ownerName: json['owner']?['userName'] ?? 'Unknown Owner',
+      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
+    );
   }
-}
-
-class CreateOrganizationData {
-  String organisationName;
-  String organisationLogo;
-  String organisationDescription;
-
-  CreateOrganizationData({
-    this.organisationName = '',
-    this.organisationLogo = '',
-    this.organisationDescription = '',
-  });
 }

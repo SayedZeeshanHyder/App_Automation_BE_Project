@@ -1,6 +1,7 @@
 package com.flutomapp.app.controller;
 
 import com.flutomapp.app.dtomodel.UserDto;
+import com.flutomapp.app.dtomodel.UserDtoWithoutNotification;
 import com.flutomapp.app.model.NotificationEntity;
 import com.flutomapp.app.model.UserEntity;
 import com.flutomapp.app.repository.UserRepository;
@@ -22,9 +23,9 @@ public class UserController {
         this.userRepository = userRepository;
     }
 
-    @GetMapping("{userId}")
-    public ResponseEntity<?> getUserById(@PathVariable String userId, Authentication authentication) {
-        UserEntity user = userRepository.findById(userId).orElse(null);
+    @GetMapping
+    public ResponseEntity<?> getUserById(Authentication authentication) {
+        UserEntity user = (UserEntity) authentication.getPrincipal();
         if (user == null) {
             return ResponseEntity.notFound().build();
         }
@@ -34,13 +35,13 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
-    @GetMapping
+    @GetMapping("all")
     public ResponseEntity<?> getAllUsers() {
         List<UserEntity> users = userRepository.findAll();
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("user_count", users.size());
-        response.put("users", users.stream().map(UserDto::new).toList());
+        response.put("users", users.stream().map(UserDtoWithoutNotification::new).toList());
         return ResponseEntity.ok(response);
     }
 

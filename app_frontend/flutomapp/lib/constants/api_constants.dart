@@ -6,6 +6,14 @@ class ApiConstants{
 
   static final String baseUrl = dotenv.env['BASE_URL'] ?? 'http://192.168.0.103:5050';
 
+  static final String loginApi = "/auth/login";
+  static final String registerApi = "/auth/register";
+  static final String createOrganisationApi = "/organisation/create";
+  static final String getOrganisationsApi = "/organisation";
+  static final String joinOrganisationApi = "/organisation/join";
+  static final String getUserApi = "/user";
+
+
   static final String createFlutterProject  = "/create-flutter-project";
 
 }
