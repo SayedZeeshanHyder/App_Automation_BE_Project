@@ -21,6 +21,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
   bool _isLoading = true;
   List<NotificationEntity> _notifications = [];
   String? _errorMessage;
+  String? _processingNotificationId; // Tracks the ID of the notification being processed
 
   // Define a professional color scheme
   static const Color _primaryColor = Color(0xFF5E72EB);
@@ -54,13 +55,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        print(data);
         final List<dynamic> notificationData = data['user']?['notifications'] ?? [];
-        setState(() {
-          _notifications = notificationData.map((json) => NotificationEntity.fromJson(json)).toList();
-          // Sort notifications by most recent
-          _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        });
+        if (mounted) {
+          setState(() {
+            _notifications = notificationData.map((json) => NotificationEntity.fromJson(json)).toList();
+            _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          });
+        }
       } else {
         final responseBody = json.decode(response.body);
         throw Exception(responseBody['message'] ?? 'Failed to load notifications.');
@@ -78,21 +79,58 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
-  void _acceptRequest(NotificationEntity notification) {
-    print("Accepted request for notification ID: ${notification.id}");
-    // Here you would call your API to accept the request
-    // e.g., POST to /organisation/join/accept with data from notification.data
-    _showSnackBar("Join request accepted.", isError: false);
-    // Optionally remove the notification from the list
+  Future<void> _acceptRequest(NotificationEntity notification) async {
+    // Prevent multiple clicks while a request is in progress
+    if (_processingNotificationId != null) return;
+
+    if (!mounted) return;
     setState(() {
-      _notifications.removeWhere((n) => n.id == notification.id);
+      _processingNotificationId = notification.id;
     });
+
+    try {
+      final String token = SharedPreferencesService.getToken();
+      final Uri url = Uri.parse(ApiConstants.baseUrl + ApiConstants.approveOrganisationApi);
+
+      // The body of the request is the notification object itself
+      final String requestBody = json.encode(notification.toJson());
+
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: requestBody,
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode == 200) {
+        _showSnackBar("Join request accepted successfully.", isError: false);
+        // Refresh the notifications list to reflect the change
+        await _fetchNotifications();
+      } else {
+        final responseBody = json.decode(response.body);
+        throw Exception(responseBody['message'] ?? 'Failed to approve request.');
+      }
+    } on SocketException {
+      _showSnackBar("No Internet connection. Please check your network.", isError: true);
+    } on TimeoutException {
+      _showSnackBar("The approval request timed out. Please try again.", isError: true);
+    } catch (e) {
+      _showSnackBar(e.toString().replaceFirst("Exception: ", ""), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _processingNotificationId = null);
+      }
+    }
   }
 
-  void _rejectRequest(NotificationEntity notification) {
+  Future<void> _rejectRequest(NotificationEntity notification) async {
+    // This is a placeholder for the reject functionality.
+    // You would implement it similarly to _acceptRequest,
+    // likely calling a different endpoint (e.g., /organisation/reject).
     print("Rejected request for notification ID: ${notification.id}");
-    // Here you would call your API to reject the request
-    _showSnackBar("Join request rejected.", isError: true);
+    _showSnackBar("Join request rejected.", isError: false); // Changed to false for visual feedback
     setState(() {
       _notifications.removeWhere((n) => n.id == notification.id);
     });
@@ -105,13 +143,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
         content: Text(message),
         backgroundColor: isError ? _errorColor : _successColor,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    print(SharedPreferencesService.getToken());
+    debugPrint(SharedPreferencesService.getToken());
     return Scaffold(
       backgroundColor: _backgroundColor,
       appBar: AppBar(
@@ -142,7 +182,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
-          child: Text(_errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: _secondaryTextColor, fontSize: 16)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(_errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: _secondaryTextColor, fontSize: 16)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _fetchNotifications,
+                style: ElevatedButton.styleFrom(backgroundColor: _primaryColor),
+                child: const Text("Try Again"),
+              )
+            ],
+          ),
         ),
       );
     }
@@ -177,7 +228,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.notifications_active_outlined, color: _primaryColor, size: 24),
+                const Icon(Icons.notifications_active_outlined, color: _primaryColor, size: 24),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -197,7 +248,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 ),
               ],
             ),
-            _buildActionButtons(notification), // Conditionally build buttons
+            _buildActionButtons(notification),
           ],
         ),
       ),
@@ -205,7 +256,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
   }
 
   Widget _buildActionButtons(NotificationEntity notification) {
-    // Use a switch case to handle different notification categories
+    // Check if this specific notification is being processed
+    final bool isProcessing = _processingNotificationId == notification.id;
+
     switch (notification.category) {
       case 'join_request':
         return Padding(
@@ -213,33 +266,42 @@ class _NotificationScreenState extends State<NotificationScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(
-                onPressed: () => _rejectRequest(notification),
-                style: TextButton.styleFrom(
-                  backgroundColor: _errorColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              // If processing, show a loading indicator. Otherwise, show buttons.
+              if (isProcessing)
+                const SizedBox(
+                  height: 36, // Match button height
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: _primaryColor,
+                      strokeWidth: 2.5,
+                    ),
+                  ),
+                )
+              else ...[
+                TextButton(
+                  onPressed: () => _rejectRequest(notification),
+                  style: TextButton.styleFrom(
+                    backgroundColor: _errorColor.withOpacity(0.1),
+                    foregroundColor: _errorColor,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Reject'),
                 ),
-                child: const Text('Reject'),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => _acceptRequest(notification),
-                style: TextButton.styleFrom(
-                  backgroundColor: _successColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => _acceptRequest(notification),
+                  style: TextButton.styleFrom(
+                    backgroundColor: _successColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Accept'),
                 ),
-                child: const Text('Accept'),
-              ),
+              ],
             ],
           ),
         );
-    // Add more cases for other categories here in the future
-    // case 'new_feature':
-    //   return ...
       default:
-      // Return an empty container if no actions are needed
         return const SizedBox.shrink();
     }
   }

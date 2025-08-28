@@ -20,6 +20,8 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -116,6 +118,12 @@ public class ProjectCreationService {
             project.setOrganisation(organisation);
             project.setStatus("Created");
             project.setProjectName(projectName);
+            project.setEnvVariables(IntStream.range(0, envKeys.size())
+                    .mapToObj(i -> Map.of(envKeys.get(i), envValues.get(i)))
+                    .collect(Collectors.toList()));
+            project.setFirebaseConfigured(firebaseConfigured);
+            project.setAppIcon("");
+            project.setAndroidPermissions(androidPermissions);
             ProjectEntity savedProject = projectRepository.save(project);
             List<ProjectEntity> projects = organisation.getProjects();
             projects.add(savedProject);

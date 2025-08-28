@@ -10,6 +10,7 @@ import org.springframework.data.mongodb.core.mapping.DBRef;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @AllArgsConstructor
@@ -24,9 +25,13 @@ public class ProjectEntityDto {
     private String lastBuildVersion="";
     private String lastBuildLocation="";
 
-    private OrganisationDto organisation;
+    private String organisationId;
 
     private List<Screen> listOfScreens = new ArrayList<>();
+    private List<Map<String,String>> envVariables = new ArrayList<>();
+    private boolean isFirebaseConfigured = false;
+    private String appIcon;
+    private List<String> androidPermissions = new ArrayList<>();
 
     public ProjectEntityDto(ProjectEntity project) {
         this.id = project.getId();
@@ -35,7 +40,11 @@ public class ProjectEntityDto {
         this.createdAt=project.getCreatedAt();
         this.lastBuildAt=project.getLastBuildAt();
         this.lastBuildVersion=project.getLastBuildVersion();
-        this.organisation=new OrganisationDto(project.getOrganisation());
+        this.organisationId=project.getOrganisation().getId();
         listOfScreens=project.getListOfScreens();
+        this.androidPermissions = project.getAndroidPermissions();
+        this.envVariables = project.getEnvVariables();
+        this.appIcon = project.getAppIcon();
+        this.isFirebaseConfigured=project.isFirebaseConfigured();
     }
 }
