@@ -20,6 +20,8 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -107,15 +109,27 @@ public class ProjectCreationService {
                 }
             }
 
-            Path zipPath = Paths.get(baseProjectsDir, uniqueId + ".zip");
-            zipFolder(flutterProjectDir, zipPath);
-
             long end = System.currentTimeMillis();
             ProjectEntity project = new ProjectEntity();
             project.setId(uniqueId);
             project.setOrganisation(organisation);
             project.setStatus("Created");
             project.setProjectName(projectName);
+
+            // --- CORRECTED SECTION ---
+            // This block now safely handles cases where envKeys is null or empty.
+            if (envKeys != null && !envKeys.isEmpty()) {
+                project.setEnvVariables(IntStream.range(0, envKeys.size())
+                        .mapToObj(i -> Map.of(envKeys.get(i), envValues.get(i)))
+                        .collect(Collectors.toList()));
+            } else {
+                project.setEnvVariables(new ArrayList<>()); // Assign an empty list if no keys are provided.
+            }
+            // --- END OF CORRECTION ---
+
+            project.setFirebaseConfigured(firebaseConfigured);
+            project.setAppIcon("");
+            project.setAndroidPermissions(androidPermissions);
             ProjectEntity savedProject = projectRepository.save(project);
             List<ProjectEntity> projects = organisation.getProjects();
             projects.add(savedProject);

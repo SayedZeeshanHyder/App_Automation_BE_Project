@@ -12,8 +12,10 @@ class ApiConstants{
   static final String getOrganisationsApi = "/organisation";
   static final String joinOrganisationApi = "/organisation/join";
   static final String getUserApi = "/user";
+  static const String approveOrganisationApi = '/organisation/approve';
 
 
+  static const String projectsApi = '/project';
   static final String createFlutterProject  = "/create-flutter-project";
 
 }

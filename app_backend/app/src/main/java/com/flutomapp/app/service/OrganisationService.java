@@ -120,9 +120,17 @@ public class OrganisationService {
             organisation.setMembers(members);
             organisationRepository.save(organisation);
 
-            String subject = "You’ve been added to " + organisation.getOrganisationName();
+            user.setOrganisation(organisation);
+            List<NotificationEntity> userNotifications = user.getNotifications();
+            NotificationEntity reqAcceptedNotification = new NotificationEntity();
+            reqAcceptedNotification.setCreatedAt(LocalDateTime.now());
+            reqAcceptedNotification.setCategory("unactionable");
+            reqAcceptedNotification.setMessage("You Successfully join the Organisation "+organisation.getOrganisationName());
+            userNotifications.add(reqAcceptedNotification);
+            userRepository.save(user);
+            /*String subject = "You’ve been added to " + organisation.getOrganisationName();
             String htmlBody = EmailTemplates.joinRequestApprovedTemplate(organisation.getOrganisationName(), user.getUsername(), owner.getUsername());
-            emailService.sendCustomEmail(user.getEmail(), subject, htmlBody);
+            emailService.sendCustomEmail(user.getEmail(), subject, htmlBody);*/
 
             response.put("success", true);
             response.put("message", "Successfully added user with userId " + userId + " to organisation with Id " + organisationId);

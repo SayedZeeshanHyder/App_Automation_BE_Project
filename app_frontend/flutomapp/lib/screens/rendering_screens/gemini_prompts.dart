@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 class GeminiPrompts {
   static String generateGeminiPrompt(String screenDescription, String formattedApi) {
     return '''
@@ -499,35 +497,6 @@ EXAMPLE PERFECT OUTPUT STRUCTURE:
     }
   }
 }
-''';
-  }
-
-  static String generateGeminiUpdatePrompt(String updateInstruction, Map<String, dynamic> currentWidgetData) {
-    const JsonEncoder encoder = JsonEncoder.withIndent('  ');
-    final String currentJson = encoder.convert(currentWidgetData);
-
-    return '''
-You are a MASTER Flutter UI Designer with 10+ years of experience. Your specialty is intelligently modifying existing UI designs based on user requests, ensuring the result is STUNNING and PIXEL-PERFECT.
-
-### 🎯 YOUR MISSION: INTELLIGENTLY UPDATE THE UI
-Your task is to take the user's update request and the current UI's JSON definition, and return a **new, modified Map<String, dynamic> JSON object** that reflects the change. You must adhere to all existing design excellence standards from the original prompt.
-
-### 🔄 CURRENT UI JSON TO UPDATE:
-Here is the JSON representation of the current screen. You must modify this existing structure based on the user's request below.
-
-```json
-$currentJson
-📝 USER'S UPDATE REQUEST:
-"$updateInstruction"
-
-🚨 ABSOLUTE REQUIREMENTS - NO EXCEPTIONS:
-Return ONLY a single JSON object (no explanations, no code blocks, no extra text)
-
-The returned JSON must be a valid modification of the provided JSON.
-
-Maintain all design standards (spacing, colors, typography, overflow prevention) from the original prompt.
-
-GENERATE ONLY THE MODIFIED JSON - MAKE THE UPDATE SEAMLESS AND BEAUTIFUL!
 ''';
   }
 }

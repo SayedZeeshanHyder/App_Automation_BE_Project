@@ -19,6 +19,7 @@ public class UserDtoWithoutNotification {
     private String email;
     private String role;
     private String deviceToken;
+    private String organisationId;
 
     public UserDtoWithoutNotification(UserEntity user) {
         this.id = user.getId();
@@ -26,6 +27,11 @@ public class UserDtoWithoutNotification {
         this.email = user.getEmail();
         this.role = user.getRole();
         this.deviceToken = user.getDeviceToken();
+        if(user.getOrganisation() != null){
+            this.organisationId = user.getOrganisation().getId();
+        }else{
+            this.organisationId = null;
+        }
     }
 
 }

@@ -22,4 +22,15 @@ class NotificationEntity {
       data: json['data'] is Map<String, dynamic> ? json['data'] : {},
     );
   }
+
+  // Add this method
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'message': message,
+      'createdAt': createdAt.toIso8601String(),
+      'category': category,
+      'data': data,
+    };
+  }
 }

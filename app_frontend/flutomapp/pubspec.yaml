@@ -48,6 +48,8 @@ dependencies:
   uuid:
   pinput:
   intl:
+  material_symbols_icons: ^4.2867.0
+  flutter_syntax_view: ^4.1.7
 
 
 dev_dependencies:

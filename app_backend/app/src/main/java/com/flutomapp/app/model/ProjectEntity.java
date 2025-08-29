@@ -28,6 +28,10 @@ public class ProjectEntity {
     private LocalDateTime lastBuildAt=LocalDateTime.now();
     private String lastBuildVersion="";
     private String lastBuildLocation="";
+    private List<Map<String,String>> envVariables = new ArrayList<>();
+    private boolean isFirebaseConfigured = false;
+    private String appIcon;
+    private List<String> androidPermissions = new ArrayList<>();
 
     @DBRef
     private OrganisationEntity organisation;
