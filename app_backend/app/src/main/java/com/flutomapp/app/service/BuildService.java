@@ -3,13 +3,16 @@ package com.flutomapp.app.service;
 import com.flutomapp.app.dtomodel.Screen;
 import com.flutomapp.app.httpmodels.BuildModels.BuildRequest;
 import com.flutomapp.app.httpmodels.BuildModels.BuildStatus;
+import com.flutomapp.app.model.BuildEntity;
+import com.flutomapp.app.model.OrganisationEntity;
 import com.flutomapp.app.model.ProjectEntity;
+import com.flutomapp.app.model.UserEntity;
+import com.flutomapp.app.repository.BuildRepository;
 import com.flutomapp.app.repository.ProjectRepository;
-import lombok.RequiredArgsConstructor;
-import org.springframework.context.annotation.Lazy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -24,17 +27,17 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Service
-@RequiredArgsConstructor
-public class BuildService {
+public class BuildService{
 
     private static final Logger log = LoggerFactory.getLogger(BuildService.class);
     private final GeminiAIService geminiAIService;
     private final ProjectRepository projectRepository;
+    private final BuildRepository buildRepository;
     private static final String BASE_PROJECTS_FOLDER = "projects";
     private static final String FINAL_BUILDS_FOLDER = "builds";
     private final ConcurrentHashMap<String, BuildStatus> buildStatusMap = new ConcurrentHashMap<>();
@@ -43,27 +46,54 @@ public class BuildService {
     private static final int MAX_CONTEXT_SCREENS = 3;
     private static final int SUMMARIZATION_THRESHOLD = 4;
 
-    @Lazy
-    private BuildService self;
+    private final ExecutorService buildExecutor = Executors.newFixedThreadPool(5);
 
-    public String startBuildProcess(String projectId, BuildRequest request) {
+    public BuildService(GeminiAIService geminiAIService, ProjectRepository projectRepository, BuildRepository buildRepository) {
+        this.geminiAIService = geminiAIService;
+        this.projectRepository = projectRepository;
+        this.buildRepository = buildRepository;
+    }
+
+    public String startBuildProcess(String projectId, BuildRequest buildRequest, UserEntity user) {
         String buildId = UUID.randomUUID().toString();
+
+        // Fetch project and organisation
+        ProjectEntity project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project not found"));
+        OrganisationEntity organisation = project.getOrganisation();
+
+        // Create and save BuildEntity
+        BuildEntity buildEntity = new BuildEntity();
+        buildEntity.setBuildId(buildId);
+        buildEntity.setProject(project);
+        buildEntity.setOrganisation(organisation);
+        buildEntity.setCreatedBy(user);
+        buildEntity.setInstructions(buildRequest.getInstructions());
+        buildEntity.setInitialScreenIndex(buildRequest.getInitialScreenIndex());
+        buildEntity.setStatusMessage("Build initiated. Queued for processing...");
+        buildEntity.setCompleted(false);
+        buildEntity.setCreatedAt(LocalDateTime.now());
+        buildRepository.save(buildEntity);
+
+        // Initialize BuildStatus for real-time status tracking
         BuildStatus status = new BuildStatus();
         status.setBuildId(buildId);
         status.setStatusMessage("Build initiated. Queued for processing...");
         buildStatusMap.put(buildId, status);
-        self.runBuildAsync(buildId, projectId, request);
+
+        // Start async build process
+        buildExecutor.submit(() -> runBuildAsync(buildId, projectId, buildRequest));
         return buildId;
     }
 
-    @Async
     public void runBuildAsync(String buildId, String projectId, BuildRequest request) {
         log.info("Starting build {} on thread: {}", buildId, Thread.currentThread().getName());
         BuildStatus status = buildStatusMap.get(buildId);
+        BuildEntity buildEntity = buildRepository.findByBuildId(buildId).orElse(null);
 
         try {
-            status.setStatusMessage("Fetching project details and screens...");
-            status.getLogs().add("Fetching project data for project ID: " + projectId);
+            updateBuildProgress(buildId, "Fetching project details and screens...",
+                    List.of("Fetching project data for project ID: " + projectId));
 
             ProjectEntity project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new RuntimeException("Project not found with id: " + projectId));
@@ -72,7 +102,8 @@ public class BuildService {
             Path libDirectory = Paths.get(flutterProjectRootPath, "lib");
             Files.createDirectories(libDirectory);
 
-            status.setStatusMessage("Generating Dart files with AI (Smart Context Management)...");
+            updateBuildProgress(buildId, "Generating Dart files with AI (Smart Context Management)...",
+                    status.getLogs());
             List<Screen> screens = project.getListOfScreens();
             status.getLogs().add("Starting context-aware AI code generation for " + screens.size() + " screens.");
 
@@ -84,6 +115,7 @@ public class BuildService {
             for (int i = 0; i < screens.size(); i++) {
                 Screen screen = screens.get(i);
                 status.getLogs().add(String.format("Generating screen %d/%d: %s", i + 1, screens.size(), screen.getScreenName()));
+                updateBuildProgress(buildId, "Generating screen " + (i + 1) + "/" + screens.size(), status.getLogs());
 
                 // Get optimized context for this screen
                 List<Map<String, String>> optimizedContext = buildContext.getOptimizedContextForScreen(i);
@@ -105,27 +137,29 @@ public class BuildService {
                 buildContext.addGeneratedScreen(screen, dartFileName, cleanedDartCode);
             }
 
-            status.setStatusMessage("Generating main.dart with AI...");
+            updateBuildProgress(buildId, "Generating main.dart with AI...", status.getLogs());
             generateMainDartFileWithAI(libDirectory, screens, request.getInitialScreenIndex(), project.getProjectName(), buildContext);
             status.getLogs().add("Successfully generated main.dart.");
 
-            status.setStatusMessage("Building APK with Flutter command...");
+            updateBuildProgress(buildId, "Building APK with Flutter command...", status.getLogs());
             runFlutterBuild(flutterProjectRootPath, status);
 
-            status.setStatusMessage("Finalizing build and storing APK...");
+            updateBuildProgress(buildId, "Finalizing build and storing APK...", status.getLogs());
             status.getLogs().add("Flutter build command completed. Locating APK...");
             Path generatedApkPath = findGeneratedApk(flutterProjectRootPath);
             Path finalApkPath = storeApk(generatedApkPath, buildId);
             status.getLogs().add("APK successfully stored at: " + finalApkPath);
 
-            status.setStatusMessage("Build completed successfully.");
-            status.setCompleted(true);
-            status.setSuccess(true);
-            status.setApkFilePath(finalApkPath.toString());
+            // Calculate build version
+            String buildVersion = "v1.0." + System.currentTimeMillis();
 
+            // Mark build as completed successfully
+            completeBuild(buildId, true, null, finalApkPath.toString(), buildVersion);
+
+            // Update project entity
             project.setListOfScreens(screens);
             project.setLastBuildAt(LocalDateTime.now());
-            project.setLastBuildVersion(buildId);
+            project.setLastBuildVersion(buildVersion);
             project.setLastBuildLocation(finalApkPath.toString());
             projectRepository.save(project);
 
@@ -136,6 +170,9 @@ public class BuildService {
             status.setSuccess(false);
             status.getLogs().add("ERROR: " + e.getMessage());
             log.error("Build failed for buildId: {}", buildId, e);
+
+            // Update BuildEntity with failure
+            completeBuild(buildId, false, e.getMessage(), null, null);
         }
     }
 
@@ -470,6 +507,52 @@ public class BuildService {
         return destinationApkPath;
     }
 
+    // Helper method to update both BuildEntity and BuildStatus during build progress
+    private void updateBuildProgress(String buildId, String statusMessage, List<String> logs) {
+        // Update BuildEntity in database
+        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
+        if (build != null) {
+            build.setStatusMessage(statusMessage);
+            build.setLogs(new ArrayList<>(logs)); // Create new list to avoid reference issues
+            buildRepository.save(build);
+        }
+
+        // Update BuildStatus in-memory map for real-time status
+        BuildStatus status = buildStatusMap.get(buildId);
+        if (status != null) {
+            status.setStatusMessage(statusMessage);
+        }
+    }
+
+    // Helper method to mark build as completed
+    private void completeBuild(String buildId, boolean success, String errorMessage, String apkLocation, String buildVersion) {
+        // Update BuildEntity
+        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
+        if (build != null) {
+            build.setCompleted(true);
+            build.setSuccess(success);
+            build.setErrorMessage(errorMessage);
+            build.setApkLocation(apkLocation);
+            build.setBuildVersion(buildVersion);
+            build.setCompletedAt(LocalDateTime.now());
+            build.setBuildDurationMs(
+                    java.time.Duration.between(build.getCreatedAt(), LocalDateTime.now()).toMillis()
+            );
+            build.setStatusMessage(success ? "Build completed successfully." : "Build failed.");
+            buildRepository.save(build);
+        }
+
+        // Update BuildStatus map
+        BuildStatus status = buildStatusMap.get(buildId);
+        if (status != null) {
+            status.setCompleted(true);
+            status.setSuccess(success);
+            status.setErrorMessage(errorMessage);
+            status.setStatusMessage(success ? "Build completed successfully." : "Build failed.");
+            status.setApkFilePath(apkLocation);
+        }
+    }
+
     public BuildStatus getBuildStatus(String buildId) {
         return buildStatusMap.get(buildId);
     }
@@ -490,5 +573,55 @@ public class BuildService {
         } catch (MalformedURLException e) {
             throw new RuntimeException("Error creating resource for APK: " + e.getMessage(), e);
         }
+    }
+
+    public List<BuildEntity> getBuildsByOrganisationId(String organisationId) {
+        return buildRepository.findByOrganisationIdOrderByCreatedAtDesc(organisationId);
+    }
+
+    public BuildEntity getBuildByBuildId(String buildId) {
+        return buildRepository.findByBuildId(buildId)
+                .orElseThrow(() -> new RuntimeException("Build not found with buildId: " + buildId));
+    }
+
+    public List<BuildEntity> getBuildsByProjectId(String projectId) {
+        return buildRepository.findByProjectId(projectId);
+    }
+
+    public List<BuildEntity> getBuildsByUserId(String userId) {
+        return buildRepository.findByCreatedById(userId);
+    }
+
+    public void deleteBuild(String buildId) {
+        BuildEntity build = buildRepository.findByBuildId(buildId)
+                .orElseThrow(() -> new RuntimeException("Build not found with buildId: " + buildId));
+
+        // Delete APK file if it exists
+        if (build.getApkLocation() != null) {
+            try {
+                Path apkPath = Paths.get(build.getApkLocation());
+                Files.deleteIfExists(apkPath);
+                log.info("Deleted APK file: {}", build.getApkLocation());
+            } catch (IOException e) {
+                log.warn("Failed to delete APK file: {}", build.getApkLocation(), e);
+            }
+        }
+
+        // Remove from in-memory map
+        buildStatusMap.remove(buildId);
+
+        // Delete from database
+        buildRepository.delete(build);
+    }
+
+    public BuildEntity saveBuild(BuildEntity build) {
+        return buildRepository.save(build);
+    }
+
+    public BuildEntity updateBuild(BuildEntity build) {
+        if (build.getId() == null) {
+            throw new IllegalArgumentException("Cannot update build without an ID");
+        }
+        return buildRepository.save(build);
     }
 }
