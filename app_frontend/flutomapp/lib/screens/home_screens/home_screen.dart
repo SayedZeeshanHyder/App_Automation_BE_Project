@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutomapp/screens/home_screens/create_project_screen.dart';
 import 'package:flutomapp/screens/home_screens/project_details_screen.dart';
 import 'package:flutomapp/screens/notification_screens/notification_screen.dart';
 import 'package:flutter/material.dart';
@@ -48,6 +49,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final String token = SharedPreferencesService.getToken(); // Fetch your auth token
+      print(ApiConstants.baseUrl);
+      print(token);
       final Uri url = Uri.parse(ApiConstants.baseUrl + ApiConstants.projectsApi);
 
       final response = await http.get(
@@ -82,6 +85,21 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      floatingActionButton: GestureDetector(
+        onTap: (){
+          Get.to(()=>CreateProjectScreen(),transition: Transition.downToUp);
+        },
+        child: Container(constraints: BoxConstraints(maxWidth: Get.width*0.4),padding: EdgeInsets.symmetric(horizontal: 10,vertical: 7.5),decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(15,),
+          color: _primaryColor,
+        ),child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            Icon(Icons.add,color: _cardBackgroundColor,),
+            Text("Create Project",style: TextStyle(color: _cardBackgroundColor,fontWeight: FontWeight.bold),),
+          ],
+        ),),
+      ),
       backgroundColor: _backgroundColor,
       appBar: AppBar(
         backgroundColor: _cardBackgroundColor,
