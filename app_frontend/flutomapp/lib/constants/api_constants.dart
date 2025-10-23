@@ -17,5 +17,6 @@ class ApiConstants{
 
   static const String projectsApi = '/project';
   static final String createFlutterProject  = "/create-flutter-project";
+  static final String createProjectApi = "/project/create";
 
 }

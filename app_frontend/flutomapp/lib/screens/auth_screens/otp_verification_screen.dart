@@ -57,7 +57,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   Future<void> _verifyOtp() async {
-    FocusScope.of(context).unfocus();
+    print("Verifying OTP: ${_pinController.text} for email: ${widget.email}");
+
     if (!_formKey.currentState!.validate()) return;
     if(_pinController.text == "123456"){
       if(widget.role == "Owner"){

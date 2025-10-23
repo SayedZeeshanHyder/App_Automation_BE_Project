@@ -50,6 +50,10 @@ dependencies:
   intl:
   material_symbols_icons: ^4.2867.0
   flutter_syntax_view: ^4.1.7
+  font_awesome_flutter:
+  dotted_border:
+  local_auth:
+  open_filex:
 
 
 dev_dependencies:
