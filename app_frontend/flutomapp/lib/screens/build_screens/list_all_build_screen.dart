@@ -241,7 +241,6 @@ class _BuildsScreenState extends State<BuildsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      extendBodyBehindAppBar: true,
       backgroundColor: _backgroundColor,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(90),

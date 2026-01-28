@@ -48,7 +48,7 @@ dependencies:
   uuid:
   pinput:
   intl:
-  material_symbols_icons: ^4.2867.0
+  material_symbols_icons:
   flutter_syntax_view: ^4.1.7
   font_awesome_flutter:
   dotted_border:

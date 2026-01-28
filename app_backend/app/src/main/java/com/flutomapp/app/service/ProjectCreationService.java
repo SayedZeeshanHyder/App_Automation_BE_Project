@@ -167,18 +167,23 @@ public class ProjectCreationService {
     }
 
     private void runFlutterCreate(String projectName, String orgName, String description, Path rootPath) throws Exception {
-        List<String> command = Arrays.asList(
-                "C:\\Users\\zhyde\\OneDrive\\Desktop\\Zeeshan\\fluttersdk\\flutter_windows_3.19.4-stable\\flutter\\bin\\flutter.bat", "create",
-                "--org", orgName,
-                "--project-name", projectName,
-                "--description", description,
-                projectName
-        );
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(rootPath.toFile());
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        process.waitFor();
+        try {
+            List<String> command = Arrays.asList(
+                    "C:\\Users\\zhyde\\OneDrive\\Desktop\\Zeeshan\\fluttersdk\\flutter_windows_3.19.4-stable\\flutter\\bin\\flutter.bat", "create",
+                    "--org", orgName,
+                    "--project-name", projectName,
+                    "--description", description,
+                    projectName
+            );
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(rootPath.toFile());
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            process.waitFor();
+        }catch (Exception e){
+            System.out.println("Error running flutter create: " + e.getMessage());
+            System.err.println("Error running flutter create: " + e.getMessage());
+        }
     }
 
     private void configureDotEnv(Map<String, String> env, Path projectPath) throws IOException {

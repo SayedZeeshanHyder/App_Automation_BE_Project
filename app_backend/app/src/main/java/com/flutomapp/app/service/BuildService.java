@@ -81,8 +81,10 @@ public class BuildService{
         status.setStatusMessage("Build initiated. Queued for processing...");
         buildStatusMap.put(buildId, status);
 
+        System.out.println("Build Id = "+buildId);
         // Start async build process
         buildExecutor.submit(() -> runBuildAsync(buildId, projectId, buildRequest));
+        System.out.println("Returned Function");
         return buildId;
     }
 
