@@ -55,6 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
         "password": _passwordController.text,
       };
 
+      print("Hitting Post api $url");
       final response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
@@ -77,6 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _showSnackBar(errorMessage, isError: true);
       }
     } on SocketException {
+
       _showSnackBar("No Internet connection.", isError: true);
     } on TimeoutException {
       _showSnackBar("The request timed out. Please try again.", isError: true);
