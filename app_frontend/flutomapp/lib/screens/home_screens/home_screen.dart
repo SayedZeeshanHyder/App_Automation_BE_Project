@@ -482,13 +482,21 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 100),
-      itemCount: _projects.length,
-      itemBuilder: (context, index) {
-        final project = _projects[index];
-        return _buildProjectCard(project);
-      },
+    return ListView(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            physics: NeverScrollableScrollPhysics(),
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 30),
+            itemCount: _projects.length,
+            itemBuilder: (context, index) {
+              final project = _projects[index];
+              return _buildProjectCard(project);
+            },
+          ),
+        ),
+      ],
     );
   }
 
