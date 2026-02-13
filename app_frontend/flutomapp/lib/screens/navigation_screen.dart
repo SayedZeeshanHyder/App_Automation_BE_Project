@@ -36,7 +36,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       backgroundColor: _backgroundColor,
       extendBody: true,
       body: pages[_selectedIndex],
-      bottomNavigationBar: _buildGlassBottomBar(),
+      bottomNavigationBar: _buildSimpleBottomBar(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
   }
@@ -111,6 +111,95 @@ class _NavigationScreenState extends State<NavigationScreen> {
       ),
     );
   }
+
+  Widget _buildSimpleNavItem({
+    required IconData icon,
+    required String label,
+    required int index,
+  }) {
+    final isSelected = _selectedIndex == index;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedIndex = index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? _primaryColor.withOpacity(0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 24,
+              color: isSelected ? _primaryColor : Colors.grey.shade600,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                color: isSelected ? _primaryColor : Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildSimpleBottomBar() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildSimpleNavItem(
+                icon: Icons.home_rounded,
+                label: "Home",
+                index: 0,
+              ),
+              _buildSimpleNavItem(
+                icon: Icons.build_rounded,
+                label: "Builds",
+                index: 1,
+              ),
+              _buildSimpleNavItem(
+                icon: Icons.search_rounded,
+                label: "Search",
+                index: 2,
+              ),
+              _buildSimpleNavItem(
+                icon: Icons.person_rounded,
+                label: "Profile",
+                index: 3,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildNavItem({
     required IconData icon,

@@ -3,6 +3,7 @@ package com.flutomapp.app.controller;
 import com.flutomapp.app.httpmodels.ProjectCreationMetaResponse;
 import com.flutomapp.app.model.OrganisationEntity;
 import com.flutomapp.app.model.UserEntity;
+import com.flutomapp.app.repository.ProjectRepository;
 import com.flutomapp.app.service.ProjectCreationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
@@ -16,15 +17,18 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.*;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/project")
 public class ProjectCreationController {
 
     private final ProjectCreationService projectCreationService;
+    private final ProjectRepository projectRepository;
 
-    public ProjectCreationController(ProjectCreationService projectCreationService) {
+    public ProjectCreationController(ProjectCreationService projectCreationService, ProjectRepository projectRepository) {
         this.projectCreationService = projectCreationService;
+        this.projectRepository = projectRepository;
     }
 
     @PostMapping(value = "/create", consumes = {"multipart/form-data"})
@@ -73,5 +77,15 @@ public class ProjectCreationController {
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(zipFile.length())
                 .body(resource);
+    }
+
+    @GetMapping("/status/{uniqueId}")
+    public ResponseEntity<Map<String, String>> getProjectStatus(@PathVariable String uniqueId) {
+        return projectRepository.findById(uniqueId)
+                .map(project -> ResponseEntity.ok(Map.of(
+                        "projectId", project.getId(),
+                        "status", project.getStatus()
+                )))
+                .orElse(ResponseEntity.notFound().build());
     }
 }
