@@ -1,16 +1,21 @@
 package com.flutomapp.app.httpmodels.BuildModels;
-import lombok.Data;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 @Data
+@AllArgsConstructor
+@NoArgsConstructor
 public class BuildStatus {
     private String buildId;
     private String statusMessage;
-    private boolean isCompleted = false;
-    private boolean isSuccess = false;
+    private boolean completed = false;
+    private boolean success = false;
     private String errorMessage;
+    private List<String> logs = new ArrayList<>();
     private String apkFilePath;
-    private final List<String> logs = new CopyOnWriteArrayList<>();
 }

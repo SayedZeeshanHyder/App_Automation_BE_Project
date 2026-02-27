@@ -54,6 +54,7 @@ dependencies:
   dotted_border:
   local_auth:
   open_filex:
+  device_info_plus: ^11.4.0
 
 
 dev_dependencies:

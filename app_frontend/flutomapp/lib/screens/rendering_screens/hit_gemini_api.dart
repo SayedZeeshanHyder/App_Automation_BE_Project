@@ -8,7 +8,7 @@ class HitGeminiAPI{
 
   static Future<Map<String, dynamic>> hitGeminiAPI(String prompt) async {
     String geminiAPIKEY = dotenv.env['GOOGLE_API_KEY'] ?? '';
-    final response = await http.post(Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"),headers: {
+    final response = await http.post(Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"),headers: {
       "Content-Type": "application/json",
       "X-goog-api-key": geminiAPIKEY
     },body: jsonEncode({

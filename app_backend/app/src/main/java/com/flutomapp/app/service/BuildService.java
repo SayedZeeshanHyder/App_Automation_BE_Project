@@ -1,8 +1,11 @@
 package com.flutomapp.app.service;
 
+import com.flutomapp.app.config.KafkaTopicConfig;
 import com.flutomapp.app.dtomodel.Screen;
 import com.flutomapp.app.httpmodels.BuildModels.BuildRequest;
 import com.flutomapp.app.httpmodels.BuildModels.BuildStatus;
+import com.flutomapp.app.kafka.BuildPipelineEvent;
+import com.flutomapp.app.kafka.KafkaProducerService;
 import com.flutomapp.app.model.BuildEntity;
 import com.flutomapp.app.model.OrganisationEntity;
 import com.flutomapp.app.model.ProjectEntity;
@@ -27,37 +30,44 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 @Service
-public class BuildService{
+public class BuildService {
 
     private static final Logger log = LoggerFactory.getLogger(BuildService.class);
     private final GeminiAIService geminiAIService;
     private final ProjectRepository projectRepository;
     private final BuildRepository buildRepository;
+    private final KafkaProducerService kafkaProducerService;
+
     private static final String BASE_PROJECTS_FOLDER = "projects";
     private static final String FINAL_BUILDS_FOLDER = "builds";
+
     private final ConcurrentHashMap<String, BuildStatus> buildStatusMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, BuildContextManager> buildContextMap = new ConcurrentHashMap<>();
 
-    // Context window management
-    private static final int MAX_CONTEXT_SCREENS = 3;
-    private static final int SUMMARIZATION_THRESHOLD = 4;
-
-    private final ExecutorService buildExecutor = Executors.newFixedThreadPool(5);
-
-    public BuildService(GeminiAIService geminiAIService, ProjectRepository projectRepository, BuildRepository buildRepository) {
+    public BuildService(GeminiAIService geminiAIService,
+                        ProjectRepository projectRepository,
+                        BuildRepository buildRepository,
+                        KafkaProducerService kafkaProducerService) {
         this.geminiAIService = geminiAIService;
         this.projectRepository = projectRepository;
         this.buildRepository = buildRepository;
+        this.kafkaProducerService = kafkaProducerService;
     }
 
+    // ========================
+    // PUBLIC API
+    // ========================
+
+    /**
+     * Entry point: creates the build record and fires the first Kafka event.
+     * Returns immediately with the buildId.
+     */
     public String startBuildProcess(String projectId, BuildRequest buildRequest, UserEntity user) {
         String buildId = UUID.randomUUID().toString();
 
-        // Fetch project and organisation
         ProjectEntity project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new RuntimeException("Project not found"));
         OrganisationEntity organisation = project.getOrganisation();
@@ -75,298 +85,338 @@ public class BuildService{
         buildEntity.setCreatedAt(LocalDateTime.now());
         buildRepository.save(buildEntity);
 
-        // Initialize BuildStatus for real-time status tracking
+        // Initialize in-memory status for real-time polling
         BuildStatus status = new BuildStatus();
         status.setBuildId(buildId);
         status.setStatusMessage("Build initiated. Queued for processing...");
         buildStatusMap.put(buildId, status);
 
-        System.out.println("Build Id = "+buildId);
-        // Start async build process
-        buildExecutor.submit(() -> runBuildAsync(buildId, projectId, buildRequest));
-        System.out.println("Returned Function");
+        log.info("Build {} created. Publishing INITIATED event to Kafka.", buildId);
+
+        // Publish the first Kafka event to kick off the pipeline
+        BuildPipelineEvent event = new BuildPipelineEvent(
+                buildId, projectId, buildRequest.getInstructions(),
+                buildRequest.getInitialScreenIndex(), "INITIATED"
+        );
+        kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_INITIATED, event);
+
         return buildId;
     }
 
-    public void runBuildAsync(String buildId, String projectId, BuildRequest request) {
-        log.info("Starting build {} on thread: {}", buildId, Thread.currentThread().getName());
-        BuildStatus status = buildStatusMap.get(buildId);
-        BuildEntity buildEntity = buildRepository.findByBuildId(buildId).orElse(null);
+    // ========================
+    // KAFKA PIPELINE HANDLERS
+    // (Called by BuildPipelineConsumer)
+    // ========================
+
+    /**
+     * Step 1: Initialize context and start generating the first screen.
+     */
+    public void handleBuildInitiated(BuildPipelineEvent event) {
+        String buildId = event.getBuildId();
+        log.info("Handling INITIATED for build {}", buildId);
 
         try {
-            updateBuildProgress(buildId, "Fetching project details and screens...",
-                    List.of("Fetching project data for project ID: " + projectId));
+            ProjectEntity project = projectRepository.findById(event.getProjectId())
+                    .orElseThrow(() -> new RuntimeException("Project not found: " + event.getProjectId()));
 
-            ProjectEntity project = projectRepository.findById(projectId)
-                    .orElseThrow(() -> new RuntimeException("Project not found with id: " + projectId));
-
-            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + projectId + "/" + project.getProjectName();
+            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + event.getProjectId() + "/" + project.getProjectName();
             Path libDirectory = Paths.get(flutterProjectRootPath, "lib");
             Files.createDirectories(libDirectory);
 
-            updateBuildProgress(buildId, "Generating Dart files with AI (Smart Context Management)...",
-                    status.getLogs());
+            // Initialize the BuildContextManager
+            BuildContextManager contextManager = new BuildContextManager();
+            contextManager.initialize(project.getProjectName(), event.getInstructions(),
+                    project.getListOfScreens().size(), project.getListOfScreens());
+            buildContextMap.put(buildId, contextManager);
+
+            addLog(buildId, "Build context initialized for " + project.getListOfScreens().size() + " screens.");
+            updateBuildProgress(buildId, "Starting screen generation...");
+
+            // Dispatch event to generate first screen (index 0)
+            BuildPipelineEvent nextEvent = new BuildPipelineEvent(
+                    buildId, event.getProjectId(), event.getInstructions(),
+                    event.getInitialScreenIndex(), "SCREEN_GENERATE"
+            );
+            nextEvent.setCurrentScreenIndex(0);
+            kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_SCREEN_GENERATE, nextEvent);
+
+        } catch (Exception e) {
+            failBuild(buildId, e);
+        }
+    }
+
+    /**
+     * Step 2: Generate a single screen with full conversational context.
+     */
+    public void handleScreenGenerate(BuildPipelineEvent event) {
+        String buildId = event.getBuildId();
+        int screenIndex = event.getCurrentScreenIndex();
+        log.info("Handling SCREEN_GENERATE for build {}, screen index {}", buildId, screenIndex);
+
+        try {
+            ProjectEntity project = projectRepository.findById(event.getProjectId())
+                    .orElseThrow(() -> new RuntimeException("Project not found"));
+
             List<Screen> screens = project.getListOfScreens();
-            status.getLogs().add("Starting context-aware AI code generation for " + screens.size() + " screens.");
-
-            // Initialize build context
-            BuildContext buildContext = new BuildContext();
-            buildContext.initialize(project.getProjectName(), request.getInstructions(), screens.size());
-
-            // Generate screens sequentially with smart context management
-            for (int i = 0; i < screens.size(); i++) {
-                Screen screen = screens.get(i);
-                status.getLogs().add(String.format("Generating screen %d/%d: %s", i + 1, screens.size(), screen.getScreenName()));
-                updateBuildProgress(buildId, "Generating screen " + (i + 1) + "/" + screens.size(), status.getLogs());
-
-                // Get optimized context for this screen
-                List<Map<String, String>> optimizedContext = buildContext.getOptimizedContextForScreen(i);
-
-                String prompt = createContextualPromptForScreen(screen, i, screens.size());
-                String generatedDartCode = geminiAIService.generateContentWithContext(prompt, optimizedContext);
-                String cleanedDartCode = cleanGeneratedCode(generatedDartCode);
-
-                if (cleanedDartCode.startsWith("Error:")) {
-                    throw new RuntimeException("AI generation failed for screen '" + screen.getScreenName() + "': " + cleanedDartCode);
-                }
-
-                screen.setScreenCode(cleanedDartCode);
-                String dartFileName = toSnakeCase(screen.getScreenName()) + ".dart";
-                Files.write(libDirectory.resolve(dartFileName), cleanedDartCode.getBytes(StandardCharsets.UTF_8));
-                status.getLogs().add("Successfully generated file: " + dartFileName);
-
-                // Update build context with this screen
-                buildContext.addGeneratedScreen(screen, dartFileName, cleanedDartCode);
+            if (screenIndex >= screens.size()) {
+                // All screens generated — move to main.dart generation
+                BuildPipelineEvent nextEvent = new BuildPipelineEvent(
+                        buildId, event.getProjectId(), event.getInstructions(),
+                        event.getInitialScreenIndex(), "MAIN_GENERATE"
+                );
+                kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_MAIN_GENERATE, nextEvent);
+                return;
             }
 
-            updateBuildProgress(buildId, "Generating main.dart with AI...", status.getLogs());
-            generateMainDartFileWithAI(libDirectory, screens, request.getInitialScreenIndex(), project.getProjectName(), buildContext);
-            status.getLogs().add("Successfully generated main.dart.");
+            Screen screen = screens.get(screenIndex);
+            BuildContextManager contextManager = buildContextMap.get(buildId);
+            if (contextManager == null) {
+                throw new RuntimeException("Build context not found for buildId: " + buildId);
+            }
 
-            updateBuildProgress(buildId, "Building APK with Flutter command...", status.getLogs());
-            runFlutterBuild(flutterProjectRootPath, status);
+            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + event.getProjectId() + "/" + project.getProjectName();
+            Path libDirectory = Paths.get(flutterProjectRootPath, "lib");
 
-            updateBuildProgress(buildId, "Finalizing build and storing APK...", status.getLogs());
-            status.getLogs().add("Flutter build command completed. Locating APK...");
+            addLog(buildId, String.format("Generating screen %d/%d: %s", screenIndex + 1, screens.size(), screen.getScreenName()));
+            updateBuildProgress(buildId, "Generating screen " + (screenIndex + 1) + "/" + screens.size() + ": " + screen.getScreenName());
+
+            // Get optimized context with full conversation history
+            List<Map<String, String>> context = contextManager.getContextForScreen(screenIndex);
+
+            // Build the prompt
+            String prompt = createContextualPromptForScreen(screen, screenIndex, screens.size(), screens);
+            String generatedCode = geminiAIService.generateContentWithContext(prompt, context);
+            String cleanedCode = cleanGeneratedCode(generatedCode);
+
+            if (cleanedCode.startsWith("Error:")) {
+                throw new RuntimeException("AI generation failed for screen '" + screen.getScreenName() + "': " + cleanedCode);
+            }
+
+            // Write file
+            String dartFileName = toSnakeCase(screen.getScreenName()) + ".dart";
+            Files.write(libDirectory.resolve(dartFileName), cleanedCode.getBytes(StandardCharsets.UTF_8));
+            addLog(buildId, "Successfully generated: " + dartFileName);
+
+            // Update screen code in project
+            screen.setScreenCode(cleanedCode);
+            projectRepository.save(project);
+
+            // Register in context manager
+            contextManager.addGeneratedScreen(screen, dartFileName, cleanedCode);
+
+            // Check if back-patching is needed
+            List<BuildContextManager.BackpatchRequest> backpatchRequests = contextManager.detectBackpatchNeeds(screenIndex);
+
+            if (!backpatchRequests.isEmpty()) {
+                addLog(buildId, "Back-patch needed for " + backpatchRequests.size() + " previous screen(s).");
+
+                // Process back-patches synchronously before moving to next screen
+                for (BuildContextManager.BackpatchRequest bpr : backpatchRequests) {
+                    handleBackpatch(buildId, event.getProjectId(), project, screenIndex, bpr, contextManager, libDirectory);
+                }
+            }
+
+            // Proceed to next screen
+            BuildPipelineEvent nextEvent = new BuildPipelineEvent(
+                    buildId, event.getProjectId(), event.getInstructions(),
+                    event.getInitialScreenIndex(), "SCREEN_GENERATE"
+            );
+            nextEvent.setCurrentScreenIndex(screenIndex + 1);
+            kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_SCREEN_GENERATE, nextEvent);
+
+        } catch (Exception e) {
+            failBuild(buildId, e);
+        }
+    }
+
+    /**
+     * Handles back-patching a single previously generated screen.
+     */
+    private void handleBackpatch(String buildId, String projectId, ProjectEntity project,
+                                 int triggeringScreenIndex,
+                                 BuildContextManager.BackpatchRequest request,
+                                 BuildContextManager contextManager,
+                                 Path libDirectory) throws IOException {
+
+        log.info("Back-patching screen '{}' (index {}) triggered by screen index {}",
+                request.screenName, request.screenIndex, triggeringScreenIndex);
+
+        addLog(buildId, "Back-patching screen '" + request.screenName + "' — reasons: " + String.join("; ", request.reasons));
+        updateBuildProgress(buildId, "Back-patching: " + request.screenName);
+
+        List<Map<String, String>> context = contextManager.getContextForBackpatch(
+                request.screenIndex, triggeringScreenIndex, request.reasons);
+
+        String prompt = createBackpatchPrompt(request);
+        String updatedCode = geminiAIService.generateContentWithContext(prompt, context);
+        String cleanedCode = cleanGeneratedCode(updatedCode);
+
+        if (cleanedCode.startsWith("Error:")) {
+            addLog(buildId, "WARNING: Back-patch failed for '" + request.screenName + "': " + cleanedCode);
+            return; // Non-fatal — we continue the build
+        }
+
+        // Write updated file
+        Files.write(libDirectory.resolve(request.fileName), cleanedCode.getBytes(StandardCharsets.UTF_8));
+        addLog(buildId, "Successfully back-patched: " + request.fileName);
+
+        // Update context manager
+        contextManager.updateGeneratedScreen(request.screenIndex, cleanedCode);
+
+        // Update project entity
+        List<Screen> screens = project.getListOfScreens();
+        if (request.screenIndex < screens.size()) {
+            screens.get(request.screenIndex).setScreenCode(cleanedCode);
+            projectRepository.save(project);
+        }
+    }
+
+    /**
+     * Step 3: Generate main.dart.
+     */
+    public void handleMainGenerate(BuildPipelineEvent event) {
+        String buildId = event.getBuildId();
+        log.info("Handling MAIN_GENERATE for build {}", buildId);
+
+        try {
+            ProjectEntity project = projectRepository.findById(event.getProjectId())
+                    .orElseThrow(() -> new RuntimeException("Project not found"));
+
+            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + event.getProjectId() + "/" + project.getProjectName();
+            Path libDirectory = Paths.get(flutterProjectRootPath, "lib");
+
+            BuildContextManager contextManager = buildContextMap.get(buildId);
+            if (contextManager == null) {
+                throw new RuntimeException("Build context not found for buildId: " + buildId);
+            }
+
+            addLog(buildId, "Generating main.dart...");
+            updateBuildProgress(buildId, "Generating main.dart with AI...");
+
+            generateMainDartFileWithAI(libDirectory, project.getListOfScreens(),
+                    event.getInitialScreenIndex(), project.getProjectName(), contextManager);
+
+            addLog(buildId, "Successfully generated main.dart.");
+
+            // Proceed to Flutter compile
+            BuildPipelineEvent nextEvent = new BuildPipelineEvent(
+                    buildId, event.getProjectId(), event.getInstructions(),
+                    event.getInitialScreenIndex(), "FLUTTER_COMPILE"
+            );
+            kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_FLUTTER_COMPILE, nextEvent);
+
+        } catch (Exception e) {
+            failBuild(buildId, e);
+        }
+    }
+
+    /**
+     * Step 4: Run `flutter build apk`.
+     */
+    public void handleFlutterCompile(BuildPipelineEvent event) {
+        String buildId = event.getBuildId();
+        log.info("Handling FLUTTER_COMPILE for build {}", buildId);
+
+        try {
+            ProjectEntity project = projectRepository.findById(event.getProjectId())
+                    .orElseThrow(() -> new RuntimeException("Project not found"));
+
+            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + event.getProjectId() + "/" + project.getProjectName();
+
+            addLog(buildId, "Starting Flutter APK build...");
+            updateBuildProgress(buildId, "Building APK with Flutter...");
+
+            BuildStatus status = buildStatusMap.get(buildId);
+            runFlutterBuild(flutterProjectRootPath, status, buildId);
+
+            addLog(buildId, "Flutter build completed successfully.");
+
+            // Proceed to finalize
+            BuildPipelineEvent nextEvent = new BuildPipelineEvent(
+                    buildId, event.getProjectId(), event.getInstructions(),
+                    event.getInitialScreenIndex(), "FINALIZE"
+            );
+            kafkaProducerService.sendBuildEvent(KafkaTopicConfig.TOPIC_BUILD_FINALIZE, nextEvent);
+
+        } catch (Exception e) {
+            failBuild(buildId, e);
+        }
+    }
+
+    /**
+     * Step 5: Store the APK and mark build as complete.
+     */
+    public void handleBuildFinalize(BuildPipelineEvent event) {
+        String buildId = event.getBuildId();
+        log.info("Handling FINALIZE for build {}", buildId);
+
+        try {
+            ProjectEntity project = projectRepository.findById(event.getProjectId())
+                    .orElseThrow(() -> new RuntimeException("Project not found"));
+
+            String flutterProjectRootPath = BASE_PROJECTS_FOLDER + "/" + event.getProjectId() + "/" + project.getProjectName();
+
+            addLog(buildId, "Locating generated APK...");
+            updateBuildProgress(buildId, "Finalizing build and storing APK...");
+
             Path generatedApkPath = findGeneratedApk(flutterProjectRootPath);
             Path finalApkPath = storeApk(generatedApkPath, buildId);
-            status.getLogs().add("APK successfully stored at: " + finalApkPath);
+            addLog(buildId, "APK stored at: " + finalApkPath);
 
-            // Calculate build version
             String buildVersion = "v1.0." + System.currentTimeMillis();
 
-            // Mark build as completed successfully
+            // Mark build as completed
             completeBuild(buildId, true, null, finalApkPath.toString(), buildVersion);
 
-            // Update project entity
-            project.setListOfScreens(screens);
+            // Update project
             project.setLastBuildAt(LocalDateTime.now());
             project.setLastBuildVersion(buildVersion);
             project.setLastBuildLocation(finalApkPath.toString());
             projectRepository.save(project);
 
+            // Clean up context manager
+            buildContextMap.remove(buildId);
+
+            log.info("Build {} completed successfully.", buildId);
+
         } catch (Exception e) {
-            status.setStatusMessage("Build failed.");
-            status.setErrorMessage(e.getMessage());
-            status.setCompleted(true);
-            status.setSuccess(false);
-            status.getLogs().add("ERROR: " + e.getMessage());
-            log.error("Build failed for buildId: {}", buildId, e);
-
-            // Update BuildEntity with failure
-            completeBuild(buildId, false, e.getMessage(), null, null);
+            failBuild(buildId, e);
         }
     }
 
-    /**
-     * Smart Build Context Manager - maintains rolling summary + recent detailed context
-     */
-    private static class BuildContext {
-        private final List<Map<String, String>> conversationHistory = new ArrayList<>();
-        private final List<ScreenSummary> screenSummaries = new ArrayList<>();
-        private String projectName;
-        private String generalInstructions;
-        private int totalScreens;
+    // ========================
+    // PROMPT BUILDERS
+    // ========================
 
-        public void initialize(String projectName, String instructions, int totalScreens) {
-            this.projectName = projectName;
-            this.generalInstructions = instructions;
-            this.totalScreens = totalScreens;
-
-            addToHistory("user",
-                    "You are an expert Flutter/Dart developer working on project '" + projectName +
-                            "'. You will generate " + totalScreens + " screens sequentially. " +
-                            "Each screen must be consistent with previously generated screens. " +
-                            "General Instructions: " + instructions);
-
-            addToHistory("model",
-                    "Understood. I will generate Flutter screens maintaining consistency with project '" +
-                            projectName + "' and following your instructions.");
-        }
-
-        public void addGeneratedScreen(Screen screen, String fileName, String code) {
-            ScreenSummary summary = new ScreenSummary(
-                    screen.getScreenName(),
-                    fileName,
-                    extractImportantPatterns(code)
-            );
-            screenSummaries.add(summary);
-        }
-
-        public List<Map<String, String>> getOptimizedContextForScreen(int screenIndex) {
-            List<Map<String, String>> optimizedContext = new ArrayList<>(conversationHistory);
-
-            if (screenIndex >= SUMMARIZATION_THRESHOLD) {
-                String consolidatedSummary = createConsolidatedSummary(screenIndex);
-                Map<String, String> summaryMsg = new HashMap<>();
-                summaryMsg.put("role", "user");
-                summaryMsg.put("text", consolidatedSummary);
-                optimizedContext.add(summaryMsg);
-
-                Map<String, String> ackMsg = new HashMap<>();
-                ackMsg.put("role", "model");
-                ackMsg.put("text", "I understand the patterns from previous screens and will maintain consistency.");
-                optimizedContext.add(ackMsg);
-            }
-
-            // Add detailed context for recent screens
-            int detailStartIndex = Math.max(0, screenIndex - MAX_CONTEXT_SCREENS);
-            for (int i = detailStartIndex; i < screenIndex; i++) {
-                if (i < screenSummaries.size()) {
-                    ScreenSummary summary = screenSummaries.get(i);
-                    Map<String, String> detailMsg = new HashMap<>();
-                    detailMsg.put("role", "user");
-                    detailMsg.put("text", "Recent screen '" + summary.screenName + "' (" + summary.fileName + ") uses:\n" + summary.patterns);
-                    optimizedContext.add(detailMsg);
-                }
-            }
-
-            return optimizedContext;
-        }
-
-        private String createConsolidatedSummary(int upToIndex) {
-            StringBuilder summary = new StringBuilder();
-            summary.append("**Summary of Previously Generated Screens (1-").append(upToIndex).append("):**\n\n");
-
-            Map<String, Integer> navigationPatterns = new HashMap<>();
-
-            int endIndex = Math.min(upToIndex, screenSummaries.size());
-            int summaryEndIndex = Math.max(0, endIndex - MAX_CONTEXT_SCREENS);
-
-            for (int i = 0; i < summaryEndIndex; i++) {
-                ScreenSummary s = screenSummaries.get(i);
-                summary.append(i + 1).append(". ").append(s.screenName)
-                        .append(" (").append(s.fileName).append(")\n");
-
-                if (s.patterns.contains("Navigator.push")) {
-                    navigationPatterns.merge("push", 1, Integer::sum);
-                }
-                if (s.patterns.contains("Navigator.pop")) {
-                    navigationPatterns.merge("pop", 1, Integer::sum);
-                }
-            }
-
-            summary.append("\n**Common Patterns Found:**\n");
-            summary.append("- Navigation: ").append(navigationPatterns.toString()).append("\n");
-            summary.append("- Total screens summarized: ").append(summaryEndIndex).append("\n");
-            summary.append("\n**Maintain these patterns in upcoming screens.**");
-
-            return summary.toString();
-        }
-
-        private String extractImportantPatterns(String code) {
-            StringBuilder patterns = new StringBuilder();
-
-            if (code.contains("Navigator.push")) {
-                patterns.append("- Uses Navigator.push for navigation\n");
-            }
-            if (code.contains("StatefulWidget")) {
-                patterns.append("- StatefulWidget with state management\n");
-            } else if (code.contains("StatelessWidget")) {
-                patterns.append("- StatelessWidget (no state)\n");
-            }
-            if (code.contains("Scaffold")) {
-                patterns.append("- Uses Scaffold structure\n");
-            }
-            if (code.contains("ThemeData") && code.contains("primaryColor")) {
-                patterns.append("- Custom theme colors defined\n");
-            }
-
-            String[] lines = code.split("\n");
-            for (String line : lines) {
-                if (line.trim().startsWith("import ")) {
-                    patterns.append(line.trim()).append("\n");
-                }
-            }
-
-            return patterns.toString();
-        }
-
-        private void addToHistory(String role, String text) {
-            Map<String, String> message = new HashMap<>();
-            message.put("role", role);
-            message.put("text", text);
-            conversationHistory.add(message);
-        }
-
-        public List<Map<String, String>> getContextForMainDart() {
-            List<Map<String, String>> mainContext = new ArrayList<>();
-
-            if (!conversationHistory.isEmpty()) {
-                mainContext.add(conversationHistory.get(0));
-                if (conversationHistory.size() > 1) {
-                    mainContext.add(conversationHistory.get(1));
-                }
-            }
-
-            StringBuilder allScreensSummary = new StringBuilder();
-            allScreensSummary.append("**All Generated Screens:**\n");
-            for (ScreenSummary s : screenSummaries) {
-                allScreensSummary.append("- ").append(s.screenName)
-                        .append(" (").append(s.fileName).append(")\n");
-            }
-
-            Map<String, String> summaryMsg = new HashMap<>();
-            summaryMsg.put("role", "user");
-            summaryMsg.put("text", allScreensSummary.toString());
-            mainContext.add(summaryMsg);
-
-            return mainContext;
-        }
-    }
-
-    private static class ScreenSummary {
-        String screenName;
-        String fileName;
-        String patterns;
-
-        ScreenSummary(String screenName, String fileName, String patterns) {
-            this.screenName = screenName;
-            this.fileName = fileName;
-            this.patterns = patterns;
-        }
-    }
-
-    private String createContextualPromptForScreen(Screen screen, int currentIndex, int totalScreens) {
+    private String createContextualPromptForScreen(Screen screen, int currentIndex, int totalScreens, List<Screen> allScreens) {
         StringBuilder prompt = new StringBuilder();
 
-        prompt.append(String.format("**Screen %d of %d: %s**\n\n", currentIndex + 1, totalScreens, screen.getScreenName()));
+        prompt.append(String.format("**Generate Screen %d of %d: %s**\n\n", currentIndex + 1, totalScreens, screen.getScreenName()));
 
         if (currentIndex == 0) {
-            prompt.append("This is the FIRST screen in the project. ");
+            prompt.append("This is the FIRST screen in the project. Establish the foundational patterns (theming, navigation style, state management approach) that all subsequent screens will follow.\n\n");
         } else {
-            prompt.append("This screen should be CONSISTENT with all previously generated screens. ");
+            prompt.append("This screen MUST be fully consistent with all previously generated screens. Use the same navigation patterns, theming, state management, and import conventions.\n\n");
         }
 
-        prompt.append("\n**CRITICAL REQUIREMENTS**:\n");
+        // Show upcoming screens so the AI can anticipate navigation needs
+        if (currentIndex < totalScreens - 1) {
+            prompt.append("**Upcoming screens (for navigation planning):**\n");
+            for (int i = currentIndex + 1; i < totalScreens; i++) {
+                Screen upcoming = allScreens.get(i);
+                String upcomingFile = toSnakeCase(upcoming.getScreenName()) + ".dart";
+                prompt.append(String.format("  - %s (file: %s)\n", upcoming.getScreenName(), upcomingFile));
+            }
+            prompt.append("If this screen needs to navigate to any upcoming screen, use the exact class name and import the corresponding file.\n\n");
+        }
+
+        prompt.append("**CRITICAL REQUIREMENTS**:\n");
         prompt.append("1. The main widget class MUST be named EXACTLY: `").append(screen.getScreenName()).append("`\n");
         prompt.append("2. ALWAYS use lowercase `@override` annotation (NEVER `@Override`)\n");
-        prompt.append("3. Maintain consistency with previously generated screens in terms of:\n");
-        prompt.append("   - Navigation patterns and routing\n");
-        prompt.append("   - Shared widgets or components\n");
-        prompt.append("   - Theming and styling approaches\n");
-        prompt.append("   - State management patterns\n");
-        prompt.append("   - Import statements and dependencies\n\n");
+        prompt.append("3. Use consistent navigation patterns with all previous screens\n");
+        prompt.append("4. Use consistent theming and styling approaches\n");
+        prompt.append("5. Import other screen files correctly when navigating to them\n");
+        prompt.append("6. Use consistent state management patterns\n\n");
 
         if (screen.getScreenPrompt() != null && !screen.getScreenPrompt().trim().isEmpty()) {
             prompt.append("**SCREEN SPECIFIC REQUIREMENTS**:\n");
@@ -374,7 +424,7 @@ public class BuildService{
         }
 
         if (screen.getScreenCode() != null && !screen.getScreenCode().trim().isEmpty()) {
-            prompt.append("**BASE CODE TO MODIFY**:\n```dart\n");
+            prompt.append("**BASE CODE TO MODIFY/ENHANCE**:\n```dart\n");
             prompt.append(screen.getScreenCode());
             prompt.append("\n```\n\n");
         }
@@ -387,29 +437,47 @@ public class BuildService{
         return prompt.toString();
     }
 
-    private String cleanGeneratedCode(String rawCode) {
-        if (rawCode == null || rawCode.trim().isEmpty()) {
-            return "";
+    private String createBackpatchPrompt(BuildContextManager.BackpatchRequest request) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("**UPDATE REQUIRED for screen '").append(request.screenName).append("' (").append(request.fileName).append(")**\n\n");
+        prompt.append("The following issues need to be fixed in this screen:\n");
+        for (String reason : request.reasons) {
+            prompt.append("- ").append(reason).append("\n");
         }
+        prompt.append("\n**REQUIREMENTS**:\n");
+        prompt.append("1. Fix ALL the issues listed above\n");
+        prompt.append("2. Keep all existing functionality intact\n");
+        prompt.append("3. Add any missing imports\n");
+        prompt.append("4. Maintain the same class name and structure\n");
+        prompt.append("5. Ensure navigation works correctly with the new screen\n\n");
+        prompt.append("**OUTPUT FORMAT**:\n");
+        prompt.append("Respond with ONLY the complete updated Dart code for this file. ");
+        prompt.append("Do NOT include explanations, markdown code blocks, or any other text. ");
+        prompt.append("Your response must start directly with 'import' or 'class'.");
+        return prompt.toString();
+    }
 
+    // ========================
+    // UTILITY METHODS
+    // ========================
+
+    private String cleanGeneratedCode(String rawCode) {
+        if (rawCode == null || rawCode.trim().isEmpty()) return "";
         String cleaned = rawCode.trim();
-
         if (cleaned.startsWith("```dart")) {
             cleaned = cleaned.substring(7).trim();
         } else if (cleaned.startsWith("```")) {
             cleaned = cleaned.substring(3).trim();
         }
-
         if (cleaned.endsWith("```")) {
             cleaned = cleaned.substring(0, cleaned.length() - 3).trim();
         }
-
         return cleaned;
     }
 
-    private void runFlutterBuild(String projectPath, BuildStatus status) throws IOException, InterruptedException {
+    private void runFlutterBuild(String projectPath, BuildStatus status, String buildId) throws IOException, InterruptedException {
         ProcessBuilder processBuilder = new ProcessBuilder();
-        String flutterExecutablePath = "C:\\Users\\zhyde\\OneDrive\\Desktop\\Zeeshan\\fluttersdk\\flutter_windows_3.29.3-stable\\flutter\\bin\\flutter.bat";
+        String flutterExecutablePath = "C:\\flutter\\flutter\\bin\\flutter.bat";
         processBuilder.command(flutterExecutablePath, "build", "apk", "--release");
         processBuilder.directory(new java.io.File(projectPath));
         processBuilder.redirectErrorStream(true);
@@ -418,7 +486,10 @@ public class BuildService{
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                status.getLogs().add(line);
+                if (status != null) {
+                    status.getLogs().add(line);
+                }
+                addLog(buildId, line);
             }
         }
 
@@ -434,7 +505,8 @@ public class BuildService{
         }
     }
 
-    private void generateMainDartFileWithAI(Path libDirectory, List<Screen> screens, int initialScreenIndex, String projectName, BuildContext buildContext) throws IOException {
+    private void generateMainDartFileWithAI(Path libDirectory, List<Screen> screens, int initialScreenIndex,
+                                            String projectName, BuildContextManager contextManager) throws IOException {
         if (initialScreenIndex < 0 || initialScreenIndex >= screens.size()) {
             throw new IllegalArgumentException("Initial screen index is out of bounds.");
         }
@@ -447,9 +519,7 @@ public class BuildService{
             Screen screen = screens.get(i);
             String fileName = toSnakeCase(screen.getScreenName()) + ".dart";
             screenInfo.append(String.format("%d. Class: %s, File: %s%s\n",
-                    i + 1,
-                    screen.getScreenName(),
-                    fileName,
+                    i + 1, screen.getScreenName(), fileName,
                     i == initialScreenIndex ? " (INITIAL SCREEN)" : ""));
         }
 
@@ -468,14 +538,11 @@ public class BuildService{
                         "Respond with ONLY the complete main.dart code. " +
                         "Do NOT include explanations, markdown code blocks, or any other text. " +
                         "Your response must start directly with 'import'.",
-                projectName,
-                screenInfo.toString(),
-                initialScreen.getScreenName(),
-                toSnakeCase(initialScreen.getScreenName()) + ".dart",
-                projectName
+                projectName, screenInfo, initialScreen.getScreenName(),
+                toSnakeCase(initialScreen.getScreenName()) + ".dart", projectName
         );
 
-        List<Map<String, String>> mainContext = buildContext.getContextForMainDart();
+        List<Map<String, String>> mainContext = contextManager.getContextForMainDart();
         String generatedMainDart = geminiAIService.generateContentWithContext(mainDartPrompt, mainContext);
         String cleanedMainDart = cleanGeneratedCode(generatedMainDart);
 
@@ -509,26 +576,38 @@ public class BuildService{
         return destinationApkPath;
     }
 
-    // Helper method to update both BuildEntity and BuildStatus during build progress
-    private void updateBuildProgress(String buildId, String statusMessage, List<String> logs) {
-        // Update BuildEntity in database
-        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
-        if (build != null) {
-            build.setStatusMessage(statusMessage);
-            build.setLogs(new ArrayList<>(logs)); // Create new list to avoid reference issues
-            buildRepository.save(build);
+    // ========================
+    // STATUS MANAGEMENT
+    // ========================
+
+    private void addLog(String buildId, String logMessage) {
+        BuildStatus status = buildStatusMap.get(buildId);
+        if (status != null) {
+            status.getLogs().add(logMessage);
         }
 
-        // Update BuildStatus in-memory map for real-time status
+        // Persist to DB periodically (every log for now; can be batched for performance)
+        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
+        if (build != null) {
+            build.getLogs().add(logMessage);
+            buildRepository.save(build);
+        }
+    }
+
+    private void updateBuildProgress(String buildId, String statusMessage) {
         BuildStatus status = buildStatusMap.get(buildId);
         if (status != null) {
             status.setStatusMessage(statusMessage);
         }
+
+        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
+        if (build != null) {
+            build.setStatusMessage(statusMessage);
+            buildRepository.save(build);
+        }
     }
 
-    // Helper method to mark build as completed
     private void completeBuild(String buildId, boolean success, String errorMessage, String apkLocation, String buildVersion) {
-        // Update BuildEntity
         BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
         if (build != null) {
             build.setCompleted(true);
@@ -544,7 +623,6 @@ public class BuildService{
             buildRepository.save(build);
         }
 
-        // Update BuildStatus map
         BuildStatus status = buildStatusMap.get(buildId);
         if (status != null) {
             status.setCompleted(true);
@@ -555,8 +633,39 @@ public class BuildService{
         }
     }
 
+    private void failBuild(String buildId, Exception e) {
+        log.error("Build failed for buildId: {}", buildId, e);
+        addLog(buildId, "ERROR: " + e.getMessage());
+        completeBuild(buildId, false, e.getMessage(), null, null);
+        buildContextMap.remove(buildId);
+    }
+
+    // ========================
+    // QUERY METHODS
+    // ========================
+
     public BuildStatus getBuildStatus(String buildId) {
-        return buildStatusMap.get(buildId);
+        // Try in-memory first for real-time data
+        BuildStatus status = buildStatusMap.get(buildId);
+        if (status != null) {
+            return status;
+        }
+
+        // Fallback to database (for builds that completed and were evicted from memory)
+        BuildEntity build = buildRepository.findByBuildId(buildId).orElse(null);
+        if (build != null) {
+            BuildStatus dbStatus = new BuildStatus();
+            dbStatus.setBuildId(build.getBuildId());
+            dbStatus.setStatusMessage(build.getStatusMessage());
+            dbStatus.setCompleted(build.isCompleted());
+            dbStatus.setSuccess(build.isSuccess());
+            dbStatus.setErrorMessage(build.getErrorMessage());
+            dbStatus.setApkFilePath(build.getApkLocation());
+            //dbStatus.setLogs(build.getLogs() != null ? build.getLogs() : new ArrayList<>());
+            return dbStatus;
+        }
+
+        return null;
     }
 
     public Resource getApkResource(String buildId) {
@@ -598,7 +707,6 @@ public class BuildService{
         BuildEntity build = buildRepository.findByBuildId(buildId)
                 .orElseThrow(() -> new RuntimeException("Build not found with buildId: " + buildId));
 
-        // Delete APK file if it exists
         if (build.getApkLocation() != null) {
             try {
                 Path apkPath = Paths.get(build.getApkLocation());
@@ -609,11 +717,25 @@ public class BuildService{
             }
         }
 
-        // Remove from in-memory map
         buildStatusMap.remove(buildId);
-
-        // Delete from database
+        buildContextMap.remove(buildId);
         buildRepository.delete(build);
+    }
+
+    public void deleteBuildsByOrganisationId(String organisationId) {
+        // Optional: check if builds exist first
+        List<BuildEntity> builds = buildRepository.findByOrganisationId(organisationId);
+        if (!builds.isEmpty()) {
+            buildRepository.deleteByOrganisationId(organisationId);
+        }
+    }
+
+    // Delete all builds of a specific project
+    public void deleteBuildsByProjectId(String projectId) {
+        List<BuildEntity> builds = buildRepository.findByProjectId(projectId);
+        if (!builds.isEmpty()) {
+            buildRepository.deleteByProjectId(projectId);
+        }
     }
 
     public BuildEntity saveBuild(BuildEntity build) {

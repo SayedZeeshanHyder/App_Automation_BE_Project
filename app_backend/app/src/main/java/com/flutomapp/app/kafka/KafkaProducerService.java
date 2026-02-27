@@ -25,6 +25,13 @@ public class KafkaProducerService {
             throw new RuntimeException("Failed to serialize ProjectCreationEventSample", e);
         }
     }
+
+    public void sendBuildEvent(String topic, BuildPipelineEvent event) {
+        try {
+            String json = objectMapper.writeValueAsString(event);
+            kafkaTemplate.send(topic, event.getBuildId(), json);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize BuildPipelineEvent", e);
+        }
+    }
 }
-
-
