@@ -53,7 +53,7 @@ public class BuildDto {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof BuildEntity)) return false;
+        if (!(o instanceof BuildDto)) return false;
         BuildDto that = (BuildDto) o;
         return id != null && id.equals(that.id);
     }

@@ -57,7 +57,7 @@ public class GeminiAIService {
         }
 
         try {
-            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent";
 
             Map<String, Object> requestBody = createRequestBodyWithHistory(prompt.trim(), conversationHistory);
 

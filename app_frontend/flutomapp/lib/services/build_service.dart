@@ -12,8 +12,10 @@ class BuildService {
     int initialScreenIndex = 0,
   }) async {
     try {
+      print("Hitting the API :- ${ApiConstants.baseUrl}/build/$projectId");
       final url = Uri.parse('${ApiConstants.baseUrl}/build/$projectId');
       String token = SharedPreferencesService.getToken();
+      print("token : $token");
       final response = await http.post(
         url,
         headers: {
@@ -33,7 +35,7 @@ class BuildService {
         },
       );
 
-      if (response.statusCode == 200) {
+      if (response.statusCode.toString().startsWith("2")) {
         final data = jsonDecode(response.body);
         return BuildResponse(
           success: true,
