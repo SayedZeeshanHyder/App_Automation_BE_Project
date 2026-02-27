@@ -2,6 +2,7 @@ package com.flutomapp.app.repository;
 
 import com.flutomapp.app.model.BuildEntity;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -14,9 +15,14 @@ public interface BuildRepository extends MongoRepository<BuildEntity, String> {
 
     List<BuildEntity> findByOrganisationId(String organisationId);
 
+    @Query(value = "{ 'organisation.$id': ObjectId(?0) }", sort = "{ 'createdAt': -1 }")
     List<BuildEntity> findByOrganisationIdOrderByCreatedAtDesc(String organisationId);
 
     List<BuildEntity> findByProjectId(String projectId);
 
     List<BuildEntity> findByCreatedById(String userId);
+
+    void deleteByOrganisationId(String organisationId);
+
+    void deleteByProjectId(String projectId);
 }

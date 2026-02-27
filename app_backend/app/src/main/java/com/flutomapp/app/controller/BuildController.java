@@ -85,13 +85,17 @@ public class BuildController {
     public ResponseEntity<List<BuildDto>> getBuildsByOrganisation(
             @AuthenticationPrincipal UserEntity user) {
         try {
-            if (user.getOrganisation() == null) {
+            if (user.getOrganisation().getId() != null && user.getOrganisation().getId().isEmpty()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
             }
+            System.out.println("Got User Organisation ID: " + user.getOrganisation().getId() + "");
             List<BuildEntity> builds = buildService.getBuildsByOrganisationId(user.getOrganisation().getId());
+            System.out.println("Got Builds: " + builds.size() + "");
             List<BuildDto> buildDtos = builds.stream().map(build -> new BuildDto(build)).collect(Collectors.toList());
+            System.out.println("Converting Builds to DTOs: " + buildDtos.size() + "");
             return ResponseEntity.ok(buildDtos);
         } catch (Exception e) {
+            System.out.println(e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
         }
     }
@@ -124,6 +128,29 @@ public class BuildController {
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("error", "Build not found"));
+        }
+    }
+
+    @DeleteMapping("/organisation/{organisationId}")
+    public ResponseEntity<String> deleteBuildsByOrganisation(@PathVariable String organisationId) {
+        try {
+            buildService.deleteBuildsByOrganisationId(organisationId);
+            return ResponseEntity.ok("All builds of organisation deleted successfully.");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error deleting builds: " + e.getMessage());
+        }
+    }
+
+    // Delete all builds of a project
+    @DeleteMapping("/project/{projectId}")
+    public ResponseEntity<String> deleteBuildsByProject(@PathVariable String projectId) {
+        try {
+            buildService.deleteBuildsByProjectId(projectId);
+            return ResponseEntity.ok("All builds of project deleted successfully.");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error deleting builds: " + e.getMessage());
         }
     }
 }
